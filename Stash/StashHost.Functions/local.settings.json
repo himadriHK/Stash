@@ -1,0 +1,28 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobs__FeatureFlags": "DisableEnterpriseFeatures",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "Kafka:BootstrapServers": "",
+    "Kafka:Username": "",
+    "Kafka:Password": "",
+    "Storage:Provider": "Mega",
+    "Storage:Local:RootPath": "D:\\Media_backup\\Stash",
+    "Storage:Mega:Email": "",
+    "Storage:Mega:Password": "",
+    "Auth:Jwt:SigningKey": "stash-signing-key-change-in-production-min-32-chars",
+    "Auth:Jwt:Issuer": "stash-auth",
+    "Auth:Jwt:Audience": "stash-app",
+    "MongoDB:ConnectionString": "mongodb://localhost:27017",
+    "MongoDB:DatabaseName": "stash",
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
+    "STASH_FFMPEG_PATH": "ffmpeg",
+    "STASH_FFMPEG_VIDEO_CODEC": "libx264",
+    "DurableTask:GrpcEndpoint": "http://localhost:7071"
+  },
+  "Host": {
+    "LocalHttpPort": 7071,
+    "CORS": "*"
+  }
+}

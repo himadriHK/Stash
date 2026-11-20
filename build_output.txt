@@ -1,0 +1,34 @@
+  Determining projects to restore...
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201: Project Stash.Maui is not compatible with net10.0 (.NETCoreApp,Version=v10.0). Project Stash.Maui supports:
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-android36.0 (.NETCoreApp,Version=v10.0)
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-ios26.5 (.NETCoreApp,Version=v10.0)
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-maccatalyst26.5 (.NETCoreApp,Version=v10.0)
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-windows10.0.19041 (.NETCoreApp,Version=v10.0)
+  Restored D:\Projects\Stash\Stash\Stash.Maui.Data\Stash.Maui.Data.csproj (in 675 ms).
+  Failed to restore D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj (in 656 ms).
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.ViewModelSavedState 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Common (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Common 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.ViewModelSavedState.Android 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Common (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Common 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.ViewModelSavedState.Android 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.LiveData.Core (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.LiveData.Core 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.Runtime.Ktx.Android 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Runtime.Android (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Runtime.Android 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.Runtime.Ktx 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Runtime (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Runtime 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.Process 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Runtime (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Runtime 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+  Restored D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj (in 2.88 sec).
+  2 of 5 projects are up-to-date for restore.
+
+Build FAILED.
+
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.ViewModelSavedState 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Common (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Common 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.ViewModelSavedState.Android 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Common (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Common 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.ViewModelSavedState.Android 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.LiveData.Core (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.LiveData.Core 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.Runtime.Ktx.Android 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Runtime.Android (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Runtime.Android 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.Runtime.Ktx 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Runtime (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Runtime 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash\Stash.Maui\Stash.Maui.csproj : warning NU1608: Detected package version outside of dependency constraint: Xamarin.AndroidX.Lifecycle.Process 2.9.2.1 requires Xamarin.AndroidX.Lifecycle.Runtime (>= 2.9.2.1 && < 2.9.3) but version Xamarin.AndroidX.Lifecycle.Runtime 2.9.4 was resolved. [D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj]
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201: Project Stash.Maui is not compatible with net10.0 (.NETCoreApp,Version=v10.0). Project Stash.Maui supports:
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-android36.0 (.NETCoreApp,Version=v10.0)
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-ios26.5 (.NETCoreApp,Version=v10.0)
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-maccatalyst26.5 (.NETCoreApp,Version=v10.0)
+D:\Projects\Stash\Stash.Maui.Tests\Stash.Maui.Tests.csproj : error NU1201:   - net10.0-windows10.0.19041 (.NETCoreApp,Version=v10.0)
+    6 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:06.52

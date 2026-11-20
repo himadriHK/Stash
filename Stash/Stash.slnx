@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="MegaConnectivity.Core/MegaConnectivity.Core.csproj" />
+  <Project Path="Stash.Maui.Data/Stash.Maui.Data.csproj" />
+  <Project Path="Stash.Maui.Tests/Stash.Maui.Tests.csproj" />
+  <Project Path="Stash.Maui/Stash.Maui.csproj" />
+  <Project Path="StashHost.Functions/StashHost.Functions.csproj" />
+  <Project Path="StashHost.IdentityApi/StashHost.IdentityApi.csproj" />
+  <Project Path="StashHost.Shared/StashHost.Shared.csproj" />
+  <Project Path="StashHost.Tests/StashHost.Tests.csproj" />
+</Solution>

@@ -1,0 +1,318 @@
+20:Error: Couldn't resolve the package 'flutter_native_splash' in 'package:flutter_native_splash/flutter_native_splash.dart'.
+22:Error: Not found: 'package:flutter_native_splash/flutter_native_splash.dart'
+26:Error: Error when reading '/C:/Users/himad/AppData/Local/Pub/Cache/hosted/pub.dev/meta-1.18.3/lib/meta': Error reading '/C:/Users/himad/AppData/Local/Pub/Cache/hosted/pub.dev/meta-1.18.3/lib/meta'  (The system cannot find the file specified)
+30:Error: Error when reading 'lib/providers/models/auth_result.dart': Error reading 'lib/providers/models/auth_result.dart'  (The system cannot find the path specified)
+34:Error: Error when reading 'lib/providers/providers/app_config.dart': Error reading 'lib/providers/providers/app_config.dart'  (The system cannot find the path specified)
+38:Error: Error when reading 'lib/repositories/models/file_entity.dart': Error reading 'lib/repositories/models/file_entity.dart'  (The system cannot find the path specified)
+42:Error: Error when reading 'lib/repositories/models/folder_config.dart': Error reading 'lib/repositories/models/folder_config.dart'  (The system cannot find the path specified)
+46:Error: Error when reading 'lib/repositories/models/folder_config.dart': Error reading 'lib/repositories/models/folder_config.dart'  (The system cannot find the path specified)
+50:Error: Error when reading 'lib/repositories/services/database_helper.dart': Error reading 'lib/repositories/services/database_helper.dart'  (The system cannot find the path specified)
+54:Error: Error when reading 'lib/repositories/services/database_helper.dart': Error reading 'lib/repositories/services/database_helper.dart'  (The system cannot find the path specified)
+58:Error: Error when reading 'lib/services/models/file_entity.dart': Error reading 'lib/services/models/file_entity.dart'  (The system cannot find the path specified)
+62:Error: Error when reading 'lib/services/models/file_entity.dart': Error reading 'lib/services/models/file_entity.dart'  (The system cannot find the path specified)
+66:Error: Error when reading 'lib/services/models/file_entity.dart': Error reading 'lib/services/models/file_entity.dart'  (The system cannot find the path specified)
+70:Error: Error when reading 'lib/services/models/file_entity.dart': Error reading 'lib/services/models/file_entity.dart'  (The system cannot find the path specified)
+74:Error: Error when reading 'lib/services/models/folder_config.dart': Error reading 'lib/services/models/folder_config.dart'  (The system cannot find the path specified)
+78:Error: Error when reading 'lib/services/models/folder_config.dart': Error reading 'lib/services/models/folder_config.dart'  (The system cannot find the path specified)
+82:Error: Error when reading 'lib/services/repositories/file_repository.dart': Error reading 'lib/services/repositories/file_repository.dart'  (The system cannot find the path specified)
+86:Error: Error when reading 'lib/services/repositories/file_repository.dart': Error reading 'lib/services/repositories/file_repository.dart'  (The system cannot find the path specified)
+90:Error: Error when reading 'lib/services/repositories/file_repository.dart': Error reading 'lib/services/repositories/file_repository.dart'  (The system cannot find the path specified)
+94:Error: Error when reading 'lib/services/models/auth_result.dart': Error reading 'lib/services/models/auth_result.dart'  (The system cannot find the path specified)
+98:Error: Error when reading 'lib/services/models/upload_result.dart': Error reading 'lib/services/models/upload_result.dart'  (The system cannot find the path specified)
+102:Error: Error when reading 'lib/services/providers/app_config.dart': Error reading 'lib/services/providers/app_config.dart'  (The system cannot find the path specified)
+106:Error: Error when reading 'lib/services/providers/app_config.dart': Error reading 'lib/services/providers/app_config.dart'  (The system cannot find the path specified)
+110:Error: Error when reading 'lib/services/providers/app_config.dart': Error reading 'lib/services/providers/app_config.dart'  (The system cannot find the path specified)
+114:Error: Error when reading 'lib/services/providers/app_config.dart': Error reading 'lib/services/providers/app_config.dart'  (The system cannot find the path specified)
+118:Error: Error when reading 'lib/services/providers/auth_provider.dart': Error reading 'lib/services/providers/auth_provider.dart'  (The system cannot find the path specified)
+122:Error: Error when reading 'lib/services/providers/auth_provider.dart': Error reading 'lib/services/providers/auth_provider.dart'  (The system cannot find the path specified)
+126:Error: Error when reading 'lib/services/providers/auth_provider.dart': Error reading 'lib/services/providers/auth_provider.dart'  (The system cannot find the path specified)
+130:Error: Error when reading 'lib/services/providers/auth_provider.dart': Error reading 'lib/services/providers/auth_provider.dart'  (The system cannot find the path specified)
+134:Error: Error when reading 'lib/services/models/upload_status.dart': Error reading 'lib/services/models/upload_status.dart'  (The system cannot find the path specified)
+138:Error: Error when reading 'lib/services/models/upload_status.dart': Error reading 'lib/services/models/upload_status.dart'  (The system cannot find the path specified)
+142:Error: Error when reading 'lib/services/services/upload_result.dart': Error reading 'lib/services/services/upload_result.dart'  (The system cannot find the path specified)
+146:Error: Error when reading 'lib/services/services/upload_manager.dart': Error reading 'lib/services/services/upload_manager.dart'  (The system cannot find the path specified)
+150:Error: Error when reading 'lib/services/services/kafka_http_transport.dart': Error reading 'lib/services/services/kafka_http_transport.dart'  (The system cannot find the path specified)
+154:Error: Error when reading 'lib/services/models/upload_request_message.dart': Error reading 'lib/services/models/upload_request_message.dart'  (The system cannot find the path specified)
+158:Error: Error when reading 'lib/services/models/upload_response_message.dart': Error reading 'lib/services/models/upload_response_message.dart'  (The system cannot find the path specified)
+162:Error: Error when reading 'lib/views/providers/auth_provider.dart': Error reading 'lib/views/providers/auth_provider.dart'  (The system cannot find the path specified)
+166:Error: Error when reading 'lib/views/providers/auth_provider.dart': Error reading 'lib/views/providers/auth_provider.dart'  (The system cannot find the path specified)
+170:Error: Error when reading 'lib/views/providers/auth_provider.dart': Error reading 'lib/views/providers/auth_provider.dart'  (The system cannot find the path specified)
+174:Error: Error when reading 'lib/views/providers/app_config.dart': Error reading 'lib/views/providers/app_config.dart'  (The system cannot find the path specified)
+178:Error: Error when reading 'lib/views/providers/app_config.dart': Error reading 'lib/views/providers/app_config.dart'  (The system cannot find the path specified)
+182:Error: Error when reading 'lib/views/providers/app_config.dart': Error reading 'lib/views/providers/app_config.dart'  (The system cannot find the path specified)
+186:Error: Error when reading 'lib/views/models/file_entity.dart': Error reading 'lib/views/models/file_entity.dart'  (The system cannot find the path specified)
+190:Error: Error when reading 'lib/views/models/upload_status.dart': Error reading 'lib/views/models/upload_status.dart'  (The system cannot find the path specified)
+194:Error: Error when reading 'lib/views/repositories/file_repository.dart': Error reading 'lib/views/repositories/file_repository.dart'  (The system cannot find the path specified)
+198:Error: Error when reading 'lib/views/models/folder_config.dart': Error reading 'lib/views/models/folder_config.dart'  (The system cannot find the path specified)
+202:Error: Error when reading 'lib/views/repositories/folder_repository.dart': Error reading 'lib/views/repositories/folder_repository.dart'  (The system cannot find the path specified)
+206:Error: Type 'ChangeNotifier' not found.
+210:Error: Type 'ChangeNotifier' not found.
+214:Error: Type 'AuthResult' not found.
+218:Error: Type 'AuthResult' not found.
+222:Error: Type 'FileEntity' not found.
+226:Error: Type 'FileEntity' not found.
+230:Error: Type 'FileEntity' not found.
+234:Error: Type 'IReadOnlyList' not found.
+238:Error: Type 'FileEntity' not found.
+242:Error: Type 'FileEntity' not found.
+246:Error: Type 'DatabaseHelper' not found.
+250:Error: Type 'MegaHttpService' not found.
+254:Error: Type 'AppConfig' not found.
+258:Error: Type 'FileEntity' not found.
+262:Error: Type 'FileEntity' not found.
+266:Error: Type 'FileEntity' not found.
+270:Error: Type 'IReadOnlyList' not found.
+274:Error: Type 'FileEntity' not found.
+278:Error: Type 'FileEntity' not found.
+282:Error: Type 'FileEntity' not found.
+286:Error: Type 'FolderConfig' not found.
+290:Error: Type 'FolderConfig' not found.
+294:Error: Type 'FolderConfig' not found.
+298:Error: Type 'IReadOnlyList' not found.
+302:Error: Type 'FolderConfig' not found.
+306:Error: Type 'FolderConfig' not found.
+310:Error: Type 'DatabaseHelper' not found.
+314:Error: Type 'FolderConfig' not found.
+318:Error: Type 'FolderConfig' not found.
+322:Error: Type 'FolderConfig' not found.
+326:Error: Type 'IReadOnlyList' not found.
+330:Error: Type 'FolderConfig' not found.
+334:Error: Type 'FolderConfig' not found.
+338:Error: Type 'FolderConfig' not found.
+342:Error: Type 'FileEntity' not found.
+346:Error: Type 'IReadOnlyList' not found.
+350:Error: Type 'IFileRepository' not found.
+354:Error: Type 'FileEntity' not found.
+358:Error: Type 'FileEntity' not found.
+362:Error: Type 'AppConfig' not found.
+366:Error: Type 'AuthProvider' not found.
+370:Error: Type 'UploadResult' not found.
+374:Error: Type 'IFileRepository' not found.
+378:Error: Type 'MegaHttpService' not found.
+382:Error: Type 'AppConfig' not found.
+386:Error: Type 'FlutterSecureStorage' not found.
+390:Error: Type 'AuthProvider' not found.
+394:Error: Type 'UploadResult' not found.
+398:Error: Type 'FileEntity' not found.
+402:Error: Type 'FileEntity' not found.
+406:Error: Type 'FileEntity' not found.
+410:Error: Type 'UploadResult' not found.
+414:Error: Type 'IFileRepository' not found.
+418:Error: Type 'UploadManager' not found.
+422:Error: Type 'KafkaHttpTransport' not found.
+426:Error: Type 'AppConfig' not found.
+430:Error: Type 'AuthProvider' not found.
+434:Error: Type 'FileEntity' not found.
+438:Error: Type 'AppConfig' not found.
+442:Error: Type 'AuthProvider' not found.
+446:Error: Type 'UploadResult' not found.
+450:Error: Type 'UploadRequestMessage' not found.
+454:Error: Type 'UploadResponseMessage' not found.
+458:Error: Type 'CancelationToken' not found.
+462:Error: Type 'UploadResponseMessage' not found.
+466:Error: Type 'UploadStatus' not found.
+470:Error: Type 'UploadStatus' not found.
+474:Error: Type 'FileEntity' not found.
+478:Error: Type 'FileEntity' not found.
+482:Error: Type 'FolderConfig' not found.
+486:Error: Type 'FolderConfig' not found.
+490:Error: The constructor function type '_BackgroundUploadResultCompleted Function({required int discovered, required int failed, required int queued, required int scanned, required int uploaded})' isn't a subtype of 'BackgroundUploadResult Function({required int discovered, required int failed, required int queued, required int scanned, required int uploaded})'.
+496:Error: Member not found: 'WidgetsBinding.ensureInitialized'.
+500:Error: The method 'DatabaseHelper' isn't defined for the type '_MyAppState'.
+505:Error: The method 'init' isn't defined for the type 'FileRepository'.
+510:Error: The method 'DatabaseHelper' isn't defined for the type '_MyAppState'.
+515:Error: The method 'init' isn't defined for the type 'FolderRepository'.
+520:Error: Inferred type argument 'AppConfig' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+530:Error: Inferred type argument 'AuthProvider' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+540:Error: Inferred type argument 'FileRepository' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+550:Error: Inferred type argument 'FolderRepository' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+560:Error: Inferred type argument 'MegaHttpService' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+570:Error: Inferred type argument 'FolderScannerService' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+580:Error: Inferred type argument 'UploadManager' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+590:Error: Inferred type argument 'BackgroundUploadService' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+600:Error: Inferred type argument 'KafkaHttpTransport' doesn't conform to the bound 'ChangeNotifier?' of the type variable 'T' on 'ChangeNotifierProvider'.
+610:Error: The method 'notifyListeners' isn't defined for the type 'AppConfig'.
+615:Error: The setter '_restUrl' isn't defined for the type 'AppConfig'.
+620:Error: The setter '_kafkaBootstrapServers' isn't defined for the type 'AppConfig'.
+625:Error: The setter '_kafkaUsername' isn't defined for the type 'AppConfig'.
+630:Error: The setter '_kafkaPassword' isn't defined for the type 'AppConfig'.
+635:Error: The setter '_restUsername' isn't defined for the type 'AppConfig'.
+640:Error: The setter '_restPassword' isn't defined for the type 'AppConfig'.
+645:Error: The setter '_identityApiBaseUrl' isn't defined for the type 'AppConfig'.
+650:Error: The setter '_identityApiTimeoutSeconds' isn't defined for the type 'AppConfig'.
+655:Error: The setter '_batchSize' isn't defined for the type 'AppConfig'.
+660:Error: The setter '_maxRetries' isn't defined for the type 'AppConfig'.
+665:Error: The setter '_maxFileSizeBytes' isn't defined for the type 'AppConfig'.
+670:Error: The setter '_intervalMinutes' isn't defined for the type 'AppConfig'.
+675:Error: The setter '_maxFilesPerRun' isn't defined for the type 'AppConfig'.
+680:Error: The method 'notifyListeners' isn't defined for the type 'AppConfig'.
+685:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+690:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+695:Error: The getter 'uuid' isn't defined for the type 'AuthProvider'.
+700:Error: This expression has type 'void' and can't be used.
+704:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+709:Error: The getter 'AuthResult' isn't defined for the type 'AuthProvider'.
+714:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+719:Error: The getter 'AuthResult' isn't defined for the type 'AuthProvider'.
+724:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+729:Error: The getter 'AuthResult' isn't defined for the type 'AuthProvider'.
+734:Error: The getter 'AuthResult' isn't defined for the type 'AuthProvider'.
+739:Error: The getter 'uuid' isn't defined for the type 'AuthProvider'.
+744:Error: This expression has type 'void' and can't be used.
+748:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+753:Error: The getter 'AuthResult' isn't defined for the type 'AuthProvider'.
+758:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+763:Error: The getter 'AuthResult' isn't defined for the type 'AuthProvider'.
+768:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+773:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+778:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+783:Error: The method 'notifyListeners' isn't defined for the type 'AuthProvider'.
+788:Error: 'FileEntity' isn't a type.
+792:Error: 'FileEntity' isn't a type.
+796:Error: 'DatabaseHelper' isn't a type.
+800:Error: 'MegaHttpService' isn't a type.
+804:Error: 'AppConfig' isn't a type.
+808:Error: A value of type 'Object' can't be returned from an async function with return type 'Future<bool>'.
+814:Error: 'FileEntity' isn't a type.
+818:Error: 'FileEntity' isn't a type.
+822:Error: The getter 'UploadStatus' isn't defined for the type 'FileRepository'.
+827:Error: The getter 'UploadStatus' isn't defined for the type 'FileRepository'.
+832:Error: The method 'FileEntity' isn't defined for the type 'FileRepository'.
+837:Error: 'FolderConfig' isn't a type.
+841:Error: 'FolderConfig' isn't a type.
+845:Error: 'DatabaseHelper' isn't a type.
+849:Error: 'FolderConfig' isn't a type.
+853:Error: 'FolderConfig' isn't a type.
+857:Error: The method 'FolderConfig' isn't defined for the type 'FolderRepository'.
+862:Error: 'IFileRepository' isn't a type.
+866:Error: 'FileEntity' isn't a type.
+870:Error: 'FileEntity' isn't a type.
+874:Error: 'FileEntity' isn't a type.
+878:Error: The getter 'UploadStatus' isn't defined for the type 'FolderScannerService'.
+883:Error: The method 'FileEntity' isn't defined for the type 'FolderScannerService'.
+888:Error: 'FileEntity' isn't a type.
+892:Error: The type 'Future<List<FileSystemEntity>>' used in the 'for' loop must implement 'Iterable<dynamic>'.
+900:Error: The getter 'includeSubfolders' isn't defined for the type 'FolderScannerService'.
+905:Error: 'FileEntity' isn't a type.
+909:Error: The getter 'UploadStatus' isn't defined for the type 'FolderScannerService'.
+914:Error: The method 'FileEntity' isn't defined for the type 'FolderScannerService'.
+919:Error: The argument type 'String Function(String)' can't be assigned to the parameter type 'String'.
+923:Error: The getter 'SHA256' isn't defined for the type 'FolderScannerService'.
+928:Error: The method 'computeBytesDigest' isn't defined for the type 'FolderScannerService'.
+933:Error: The getter 'Convert' isn't defined for the type 'FolderScannerService'.
+938:Error: 'AppConfig' isn't a type.
+942:Error: 'AuthProvider' isn't a type.
+946:Error: 'DioErrorHandler' isn't a type.
+947:      onError: (DioException error, DioErrorHandler handler) {
+950:Error: The method 'UploadResult' isn't defined for the type 'MegaHttpService'.
+955:Error: The method 'UploadResult' isn't defined for the type 'MegaHttpService'.
+960:Error: The method 'UploadResult' isn't defined for the type 'MegaHttpService'.
+965:Error: The method 'UploadResult' isn't defined for the type 'MegaHttpService'.
+970:Error: 'IFileRepository' isn't a type.
+974:Error: 'MegaHttpService' isn't a type.
+978:Error: 'AppConfig' isn't a type.
+982:Error: 'FlutterSecureStorage' isn't a type.
+986:Error: Method not found: 'FlutterSecureStorage'.
+990:Error: 'AuthProvider' isn't a type.
+994:Error: 'FileEntity' isn't a type.
+998:Error: The method 'File' isn't defined for the type 'UploadManager'.
+1003:Error: The method 'UploadResult' isn't defined for the type 'UploadManager'.
+1008:Error: The method 'File' isn't defined for the type 'UploadManager'.
+1013:Error: The method 'UploadResult' isn't defined for the type 'UploadManager'.
+1018:Error: The method 'UploadResult' isn't defined for the type 'UploadManager'.
+1023:Error: The getter 'UploadStatus' isn't defined for the type 'UploadManager'.
+1028:Error: The method 'UploadResult' isn't defined for the type 'UploadManager'.
+1033:Error: The getter 'UploadStatus' isn't defined for the type 'UploadManager'.
+1038:Error: The getter 'UploadStatus' isn't defined for the type 'UploadManager'.
+1043:Error: The method 'UploadResult' isn't defined for the type 'UploadManager'.
+1048:Error: The method 'UploadResult' isn't defined for the type 'UploadManager'.
+1053:Error: 'FileEntity' isn't a type.
+1057:Error: 'UploadResult' isn't a type.
+1061:Error: 'FileEntity' isn't a type.
+1065:Error: 'UploadResult' isn't a type.
+1069:Error: 'IFileRepository' isn't a type.
+1073:Error: 'UploadManager' isn't a type.
+1077:Error: 'KafkaHttpTransport' isn't a type.
+1081:Error: 'AppConfig' isn't a type.
+1085:Error: 'AuthProvider' isn't a type.
+1089:Error: The getter 'uuid' isn't defined for the type 'BackgroundUploadService'.
+1094:Error: The method 'FileMetadata' isn't defined for the type 'BackgroundUploadService'.
+1099:Error: The method 'UploadRequestMessage' isn't defined for the type 'BackgroundUploadService'.
+1104:Error: The getter 'UploadStatus' isn't defined for the type 'BackgroundUploadService'.
+1109:Error: The getter 'UploadStatus' isn't defined for the type 'BackgroundUploadService'.
+1114:Error: The getter 'UploadStatus' isn't defined for the type 'BackgroundUploadService'.
+1119:Error: 'FileEntity' isn't a type.
+1123:Error: Expected ';' after this.
+1127:Error: Expected to find '('.
+1131:Error: Expected an identifier, but got '{'.
+1135:Error: Expected to find 'case'.
+1139:Error: The argument type '_CompleterVoid' can't be assigned to the parameter type 'Completer<void>'.
+1145:Error: The getter 'scanned' isn't defined for the type 'BackgroundUploadResult'.
+1150:Error: The getter 'discovered' isn't defined for the type 'BackgroundUploadResult'.
+1155:Error: The getter 'uploaded' isn't defined for the type 'BackgroundUploadResult'.
+1160:Error: The getter 'queued' isn't defined for the type 'BackgroundUploadResult'.
+1165:Error: The getter 'failed' isn't defined for the type 'BackgroundUploadResult'.
+1170:Error: 'AppConfig' isn't a type.
+1174:Error: 'AuthProvider' isn't a type.
+1178:Error: 'DioErrorHandler' isn't a type.
+1179:      onError: (DioException error, DioErrorHandler handler) {
+1182:Error: The getter 'uuid' isn't defined for the type 'KafkaHttpTransport'.
+1187:Error: 'UploadRequestMessage' isn't a type.
+1191:Error: The method 'UploadResult' isn't defined for the type 'KafkaHttpTransport'.
+1196:Error: The method 'UploadResult' isn't defined for the type 'KafkaHttpTransport'.
+1201:Error: The method 'UploadResult' isn't defined for the type 'KafkaHttpTransport'.
+1206:Error: The method 'UploadResult' isn't defined for the type 'KafkaHttpTransport'.
+1211:Error: 'UploadResponseMessage' isn't a type.
+1215:Error: 'CancelationToken' isn't a type.
+1219:Error: The getter 'UploadResponseMessage' isn't defined for the type 'KafkaHttpTransport'.
+1224:Error: 'AuthProvider' isn't a type.
+1228:Error: 'AppConfig' isn't a type.
+1232:Error: The getter 'gray900' isn't defined for the type 'ColorScheme'.
+1237:Error: Unexpected type 'Padding' of a spread.  Expected 'dynamic' or an Iterable.
+1242:Error: The method 'notifyListeners' isn't defined for the type 'LoginPage'.
+1247:Error: The getter 'Routes' isn't defined for the type 'LoginPage'.
+1252:Error: 'AuthProvider' isn't a type.
+1256:Error: 'AppConfig' isn't a type.
+1260:Error: Unexpected type 'Padding' of a spread.  Expected 'dynamic' or an Iterable.
+1265:Error: The method 'notifyListeners' isn't defined for the type 'RegisterPage'.
+1270:Error: The getter 'Routes' isn't defined for the type 'RegisterPage'.
+1275:Error: The getter 'Routes' isn't defined for the type 'RegisterPage'.
+1280:Error: 'AuthProvider' isn't a type.
+1284:Error: 'AppConfig' isn't a type.
+1288:Error: The getter 'Routes' isn't defined for the type 'MainPage'.
+1293:Error: The getter 'Routes' isn't defined for the type 'MainPage'.
+1298:Error: The getter 'Routes' isn't defined for the type 'MainPage'.
+1303:Error: The getter 'Routes' isn't defined for the type 'MainPage'.
+1308:Error: 'IFileRepository' isn't a type.
+1312:Error: 'FileEntity' isn't a type.
+1316:Error: 'IReadOnlyList' isn't a type.
+1320:Error: The getter 'Routes' isn't defined for the type 'FileListPage'.
+1325:Error: 'UploadStatus' isn't a type.
+1329:Error: 'UploadStatus' isn't a type.
+1333:Error: Not a constant expression.
+1337:Error: Not a constant expression.
+1341:Error: Not a constant expression.
+1345:Error: Not a constant expression.
+1349:Error: Not a constant expression.
+1353:Error: Not a constant expression.
+1357:Error: 'FileEntity' isn't a type.
+1361:Error: The getter 'UploadStatus' isn't defined for the type 'FileListPage'.
+1366:Error: The getter 'UploadStatus' isn't defined for the type 'FileListPage'.
+1371:Error: The getter 'UploadStatus' isn't defined for the type 'FileListPage'.
+1376:Error: 'FileEntity' isn't a type.
+1380:Error: The getter 'Routes' isn't defined for the type 'FileListPage'.
+1385:Error: 'IFolderRepository' isn't a type.
+1389:Error: 'FolderConfig' isn't a type.
+1393:Error: 'IReadOnlyList' isn't a type.
+1397:Error: 'FolderConfig' isn't a type.
+1401:Error: Member not found: 'folder_search'.
+1405:Error: The getter 'context' isn't defined for the type 'FolderConfigPage'.
+1410:Error: The method 'FolderConfig' isn't defined for the type 'FolderConfigPage'.
+1415:Error: The getter 'folderRepository' isn't defined for the type 'FolderConfigPage'.
+1420:Error: The getter 'context' isn't defined for the type 'FolderConfigPage'.
+1425:Error: The getter 'folderRepository' isn't defined for the type 'FolderConfigPage'.
+1430:Error: The getter 'folderRepository' isn't defined for the type 'FolderConfigPage'.
+1435:Error: The getter 'context' isn't defined for the type 'FolderConfigPage'.
+1440:Error: 'FolderConfig' isn't a type.
+1443:Error: Compilation failed.
+1492:Error: Failed to compile application for the Web.

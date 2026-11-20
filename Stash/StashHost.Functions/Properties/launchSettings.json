@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "StashHost.Functions": {
+      "commandName": "Project",
+      "commandLineArgs": "--verbose"
+    }
+  }
+}

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stash — Gallery</title>
+<style>
+:root {
+  --color-primary: #2563EB; --color-primary-hover: #1D4ED8; --color-primary-light: #DBEAFE;
+  --color-secondary: #3B82F6; --color-accent: #059669; --color-background: #F8FAFC;
+  --color-surface: #FFFFFF; --color-surface-elevated: #FFFFFF; --color-foreground: #0F172A;
+  --color-foreground-muted: #64748B; --color-border: #E2E8F0; --color-border-strong: #CBD5E1;
+  --color-destructive: #DC2626; --color-destructive-light: #FEF2F2; --color-warning: #D97706;
+  --color-warning-light: #FFFBEB; --color-ring: #2563EB;
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --text-h1: 28px; --text-h2: 22px; --text-h3: 18px; --text-body-lg: 16px; --text-body: 15px;
+  --text-body-sm: 13px; --text-caption: 12px; --text-button: 15px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px; --radius-full: 9999px;
+  --elevation-1: 0 1px 2px rgba(15,23,42,0.05); --elevation-2: 0 4px 8px rgba(15,23,42,0.08); --elevation-3: 0 8px 24px rgba(15,23,42,0.12);
+  --header-height: 56px; --fab-size: 56px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #3B82F6; --color-primary-hover: #60A5FA; --color-primary-light: #1E3A5F;
+    --color-secondary: #60A5FA; --color-accent: #34D399; --color-background: #0F172A;
+    --color-surface: #1E293B; --color-surface-elevated: #334155; --color-foreground: #F8FAFC;
+    --color-foreground-muted: #94A3B8; --color-border: #334155; --color-border-strong: #475569;
+    --color-destructive: #EF4444; --color-destructive-light: #450A0A; --color-warning: #FBBF24;
+    --color-warning-light: #451A03; --color-ring: #3B82F6;
+    --elevation-1: 0 1px 2px rgba(0,0,0,0.3); --elevation-2: 0 4px 8px rgba(0,0,0,0.4); --elevation-3: 0 8px 24px rgba(0,0,0,0.5);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+body { font-family: var(--font-family); background: var(--color-background); color: var(--color-foreground); line-height: 1.5; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* Header */
+.app-header { position: sticky; top: 0; z-index: 100; height: var(--header-height); background: var(--color-background); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; padding: 0 var(--space-4); }
+.app-header h1 { font-size: var(--text-h1); font-weight: 700; letter-spacing: -0.01em; }
+.header-actions { display: flex; align-items: center; gap: var(--space-2); }
+.icon-btn { width: 40px; height: 40px; border: none; background: transparent; color: var(--color-foreground); border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 150ms ease; }
+.icon-btn:hover { background: var(--color-muted); }
+.icon-btn:active { transform: scale(0.95); }
+.icon-btn svg { width: 24px; height: 24px; }
+.badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; font-size: 11px; font-weight: 600; border-radius: var(--radius-full); background: var(--color-primary); color: white; }
+
+/* Filter Bar */
+.filter-bar { display: flex; gap: var(--space-2); padding: var(--space-3) var(--space-4); overflow-x: auto; scrollbar-width: none; background: var(--color-background); border-bottom: 1px solid var(--color-border); }
+.filter-bar::-webkit-scrollbar { display: none; }
+.filter-chip { padding: var(--space-1) var(--space-3); font-size: var(--text-caption); font-weight: 500; color: var(--color-foreground-muted); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-full); white-space: nowrap; cursor: pointer; transition: all 150ms ease; }
+.filter-chip.active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
+.filter-chip:not(.active):hover { border-color: var(--color-border-strong); color: var(--color-foreground); }
+
+/* Gallery Grid */
+.gallery { flex: 1; overflow-y: auto; padding: var(--space-4); }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+@media (min-width: 768px) { .grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 1024px) { .grid { grid-template-columns: repeat(7, 1fr); } }
+
+.grid-item { aspect-ratio: 1; border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); box-shadow: var(--elevation-1); cursor: pointer; transition: transform 150ms ease, box-shadow 150ms ease; position: relative; }
+.grid-item:hover { transform: scale(1.02); box-shadow: var(--elevation-2); z-index: 1; }
+.grid-item:active { transform: scale(0.98); }
+.grid-item.selected { outline: 3px solid var(--color-primary); outline-offset: -3px; }
+.grid-item .thumbnail { width: 100%; height: 100%; object-fit: cover; }
+.grid-item .video-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 150ms ease; }
+.grid-item:hover .video-overlay { opacity: 1; }
+.grid-item .video-overlay svg { width: 48px; height: 48px; stroke: white; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
+.grid-item .selection-check { position: absolute; top: var(--space-2); right: var(--space-2); width: 24px; height: 24px; border-radius: var(--radius-full); background: var(--color-primary); color: white; display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(0.5); transition: all 150ms ease; pointer-events: none; }
+.grid-item.selected .selection-check { opacity: 1; transform: scale(1); }
+.grid-item .status-badge { position: absolute; bottom: var(--space-2); left: var(--space-2); padding: 2px 6px; font-size: 10px; font-weight: 600; border-radius: var(--radius-sm); background: rgba(0,0,0,0.7); color: white; backdrop-filter: blur(4px); }
+.grid-item .status-badge.synced { background: var(--color-accent); }
+.grid-item .status-badge.uploading { background: var(--color-primary); animation: pulse 1.5s infinite; }
+.grid-item .status-badge.failed { background: var(--color-destructive); }
+.grid-item .status-badge.pending { background: var(--color-warning); }
+
+/* Selection Toolbar */
+.selection-toolbar { position: fixed; bottom: 0; left: 0; right: 0; height: 64px; background: var(--color-surface); border-top: 1px solid var(--color-border); box-shadow: var(--elevation-3); display: flex; align-items: center; justify-content: space-between; padding: 0 var(--space-4); transform: translateY(100%); transition: transform 300ms spring; z-index: 200; }
+.selection-toolbar.visible { transform: translateY(0); }
+.selection-toolbar .count { font-size: var(--text-body); font-weight: 500; color: var(--color-foreground); }
+.selection-toolbar .actions { display: flex; gap: var(--space-2); }
+.selection-toolbar .btn { height: 36px; padding: 0 var(--space-3); font-size: var(--text-body-sm); }
+
+/* Empty State */
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; text-align: center; padding: var(--space-8); color: var(--color-foreground-muted); }
+.empty-state svg { width: 120px; height: 120px; stroke: var(--color-border); margin-bottom: var(--space-4); }
+.empty-state h2 { font-size: var(--text-h3); font-weight: 600; color: var(--color-foreground); margin-bottom: var(--space-2); }
+.empty-state p { font-size: var(--text-body); max-width: 280px; margin-bottom: var(--space-6); }
+.empty-state .btn { width: auto; min-width: 160px; }
+
+/* FAB */
+.fab { position: fixed; bottom: var(--space-6); right: var(--space-6); width: var(--fab-size); height: var(--fab-size); border-radius: var(--radius-full); background: var(--color-primary); color: white; border: none; box-shadow: var(--elevation-3); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 150ms ease, box-shadow 150ms ease; z-index: 50; }
+.fab:hover { box-shadow: var(--elevation-4); transform: scale(1.05); }
+.fab:active { transform: scale(0.95); }
+.fab svg { width: 28px; height: 28px; }
+
+/* Selection mode hides FAB */
+body.selection-mode .fab { display: none; }
+body.selection-mode .grid-item { cursor: pointer; }
+
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } .fab { transition: none; } }
+</style>
+</head>
+<body>
+<header class="app-header" role="banner">
+  <h1>Stash</h1>
+  <div class="header-actions">
+    <span class="badge" id="syncBadge" title="3 pending">3</span>
+    <button class="icon-btn" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></button>
+    <button class="icon-btn" aria-label="Settings" onclick="location.href='03-settings.html'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+  </div>
+</header>
+
+<div class="filter-bar" role="tablist" aria-label="Filter by type">
+  <button class="filter-chip active" role="tab" aria-selected="true">All</button>
+  <button class="filter-chip" role="tab" aria-selected="false">Photos</button>
+  <button class="filter-chip" role="tab" aria-selected="false">Videos</button>
+  <button class="filter-chip" role="tab" aria-selected="false">Favorites</button>
+</div>
+
+<main class="gallery" role="main">
+  <div class="grid" id="galleryGrid" role="list">
+    <!-- Grid items injected by JS -->
+  </div>
+  <div class="empty-state" id="emptyState" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    <h2>No memories yet</h2>
+    <p>Add a folder to start backing up your photos and videos automatically.</p>
+    <button class="btn btn-primary" onclick="location.href='04-folders.html'">Add Folder</button>
+  </div>
+</main>
+
+<div class="selection-toolbar" id="selectionToolbar" role="toolbar" aria-label="Selection actions">
+  <span class="count"><span id="selectedCount">0</span> selected</span>
+  <div class="actions">
+    <button class="btn btn-tertiary" onclick="shareSelected()">Share</button>
+    <button class="btn btn-tertiary" onclick="deleteSelected()">Delete</button>
+    <button class="btn btn-primary" onclick="clearSelection()">Done</button>
+  </div>
+</div>
+
+<button class="fab" id="fab" aria-label="Add folder" onclick="location.href='04-folders.html'">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+</button>
+
+<script>
+// Mock data - in real app this comes from SQLite via IFileRepository
+const mockItems = [
+  { id: 1, type: 'photo', thumb: 'https://picsum.photos/seed/stash1/400/400.jpg', status: 'synced', name: 'IMG_001.jpg' },
+  { id: 2, type: 'photo', thumb: 'https://picsum.photos/seed/stash2/400/400.jpg', status: 'synced', name: 'IMG_002.jpg' },
+  { id: 3, type: 'video', thumb: 'https://picsum.photos/seed/stash3/400/400.jpg', status: 'uploading', name: 'VID_001.mov' },
+  { id: 4, type: 'photo', thumb: 'https://picsum.photos/seed/stash4/400/400.jpg', status: 'synced', name: 'IMG_003.jpg' },
+  { id: 5, type: 'photo', thumb: 'https://picsum.photos/seed/stash5/400/400.jpg', status: 'failed', name: 'IMG_004.jpg' },
+  { id: 6, type: 'video', thumb: 'https://picsum.photos/seed/stash6/400/400.jpg', status: 'pending', name: 'VID_002.mov' },
+  { id: 7, type: 'photo', thumb: 'https://picsum.photos/seed/stash7/400/400.jpg', status: 'synced', name: 'IMG_005.jpg' },
+  { id: 8, type: 'photo', thumb: 'https://picsum.photos/seed/stash8/400/400.jpg', status: 'synced', name: 'IMG_006.jpg' },
+  { id: 9, type: 'photo', thumb: 'https://picsum.photos/seed/stash9/400/400.jpg', status: 'synced', name: 'IMG_007.jpg' },
+  { id: 10, type: 'photo', thumb: 'https://picsum.photos/seed/stash10/400/400.jpg', status: 'synced', name: 'IMG_008.jpg' },
+  { id: 11, type: 'video', thumb: 'https://picsum.photos/seed/stash11/400/400.jpg', status: 'synced', name: 'VID_003.mp4' },
+  { id: 12, type: 'photo', thumb: 'https://picsum.photos/seed/stash12/400/400.jpg', status: 'synced', name: 'IMG_009.jpg' },
+];
+
+const grid = document.getElementById('galleryGrid');
+const emptyState = document.getElementById('emptyState');
+const selectionToolbar = document.getElementById('selectionToolbar');
+const selectedCount = document.getElementById('selectedCount');
+const syncBadge = document.getElementById('syncBadge');
+const fab = document.getElementById('fab');
+let selectedItems = new Set();
+let isSelectionMode = false;
+
+function renderGrid() {
+  grid.innerHTML = '';
+  if (mockItems.length === 0) {
+    grid.hidden = true;
+    emptyState.hidden = false;
+    fab.style.display = 'flex';
+    return;
+  }
+  grid.hidden = false;
+  emptyState.hidden = true;
+  mockItems.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'grid-item' + (selectedItems.has(item.id) ? ' selected' : '');
+    div.role = 'listitem';
+    div.tabIndex = 0;
+    div.dataset.id = item.id;
+    const statusClass = item.status;
+    const isVideo = item.type === 'video';
+    div.innerHTML = `
+      <img class="thumbnail" src="${item.thumb}" alt="${item.name}" loading="lazy">
+      ${isVideo ? '<div class="video-overlay" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>' : ''}
+      <div class="selection-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <span class="status-badge ${statusClass}">${statusLabel(item.status)}</span>
+    `;
+    div.addEventListener('click', () => toggleSelection(item.id));
+    div.addEventListener('contextmenu', (e) => { e.preventDefault(); toggleSelection(item.id); });
+    div.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelection(item.id); } });
+    grid.appendChild(div);
+  });
+  updateSyncBadge();
+}
+
+function statusLabel(status) {
+  const labels = { synced: 'Synced', uploading: 'Uploading...', failed: 'Failed', pending: 'Pending' };
+  return labels[status] || status;
+}
+
+function toggleSelection(id) {
+  if (selectedItems.has(id)) {
+    selectedItems.delete(id);
+  } else {
+    selectedItems.add(id);
+  }
+  updateSelectionMode();
+  renderGrid();
+}
+
+function updateSelectionMode() {
+  isSelectionMode = selectedItems.size > 0;
+  document.body.classList.toggle('selection-mode', isSelectionMode);
+  selectionToolbar.classList.toggle('visible', isSelectionMode);
+  selectedCount.textContent = selectedItems.size;
+  fab.style.display = isSelectionMode ? 'none' : 'flex';
+  syncBadge.style.display = isSelectionMode ? 'none' : 'inline-flex';
+}
+
+function clearSelection() {
+  selectedItems.clear();
+  updateSelectionMode();
+  renderGrid();
+}
+
+function updateSyncBadge() {
+  const pending = mockItems.filter(i => i.status !== 'synced').length;
+  syncBadge.textContent = pending;
+  syncBadge.style.display = pending > 0 ? 'inline-flex' : 'none';
+}
+
+function shareSelected() { alert(`Share ${selectedItems.size} items`); }
+function deleteSelected() {
+  if (confirm(`Delete ${selectedItems.size} selected items?`)) {
+    selectedItems.forEach(id => {
+      const idx = mockItems.findIndex(i => i.id === id);
+      if (idx >= 0) mockItems.splice(idx, 1);
+    });
+    clearSelection();
+  }
+}
+
+// Filter chips
+document.querySelectorAll('.filter-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+  });
+});
+
+// Simulate pull-to-refresh
+let touchStartY = 0;
+document.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (window.scrollY === 0 && e.touches[0].clientY - touchStartY > 100) {
+    document.body.style.overscrollBehavior = 'none';
+    setTimeout(() => { alert('Pull to refresh triggered - would call BackgroundUploadService.RunOnceAsync()'); }, 100);
+  }
+}, { passive: true });
+
+renderGrid();
+</script>
+</body>
+</html>

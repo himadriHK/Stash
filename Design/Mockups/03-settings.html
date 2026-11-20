@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stash — Settings</title>
+<style>
+:root {
+  --color-primary: #2563EB; --color-primary-hover: #1D4ED8; --color-primary-light: #DBEAFE;
+  --color-secondary: #3B82F6; --color-accent: #059669; --color-background: #F8FAFC;
+  --color-surface: #FFFFFF; --color-foreground: #0F172A; --color-foreground-muted: #64748B;
+  --color-border: #E2E8F0; --color-border-strong: #CBD5E1; --color-destructive: #DC2626;
+  --color-destructive-light: #FEF2F2; --color-warning: #D97706; --color-warning-light: #FFFBEB;
+  --color-ring: #2563EB;
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --text-h1: 28px; --text-h2: 22px; --text-h3: 18px; --text-body-lg: 16px; --text-body: 15px;
+  --text-body-sm: 13px; --text-caption: 12px; --text-button: 15px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px; --radius-full: 9999px;
+  --elevation-1: 0 1px 2px rgba(15,23,42,0.05); --elevation-2: 0 4px 8px rgba(15,23,42,0.08);
+  --header-height: 56px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #3B82F6; --color-primary-hover: #60A5FA; --color-primary-light: #1E3A5F;
+    --color-secondary: #60A5FA; --color-accent: #34D399; --color-background: #0F172A;
+    --color-surface: #1E293B; --color-foreground: #F8FAFC; --color-foreground-muted: #94A3B8;
+    --color-border: #334155; --color-border-strong: #475569; --color-destructive: #EF4444;
+    --color-destructive-light: #450A0A; --color-warning: #FBBF24; --color-warning-light: #451A03;
+    --color-ring: #3B82F6; --elevation-1: 0 1px 2px rgba(0,0,0,0.3); --elevation-2: 0 4px 8px rgba(0,0,0,0.4);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+body { font-family: var(--font-family); background: var(--color-background); color: var(--color-foreground); line-height: 1.5; min-height: 100vh; display: flex; flex-direction: column; }
+
+.app-header { position: sticky; top: 0; z-index: 100; height: var(--header-height); background: var(--color-background); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; padding: 0 var(--space-4); }
+.app-header h1 { font-size: var(--text-h1); font-weight: 700; letter-spacing: -0.01em; }
+.back-btn { width: 40px; height: 40px; border: none; background: transparent; color: var(--color-foreground); border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 150ms ease; }
+.back-btn:hover { background: var(--color-muted); }
+.back-btn svg { width: 24px; height: 24px; }
+
+.settings-content { flex: 1; overflow-y: auto; padding: var(--space-4); }
+.section { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-bottom: var(--space-4); overflow: hidden; }
+.section-header { padding: var(--space-4) var(--space-4) var(--space-2); font-size: var(--text-caption); font-weight: 600; color: var(--color-foreground-muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--color-background); border-bottom: 1px solid var(--color-border); }
+.section:first-child .section-header { border-top: none; }
+
+.setting-item { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); min-height: 56px; }
+.setting-item:last-child { border-bottom: none; }
+.setting-info { flex: 1; min-width: 0; }
+.setting-label { font-size: var(--text-body); font-weight: 500; color: var(--color-foreground); margin-bottom: var(--space-1); }
+.setting-desc { font-size: var(--text-body-sm); color: var(--color-foreground-muted); }
+.setting-value { font-size: var(--text-body-sm); color: var(--color-foreground-muted); font-family: var(--font-family), monospace; word-break: break-all; text-align: right; max-width: 50%; }
+
+/* Toggle Switch */
+.toggle { position: relative; width: 52px; height: 28px; border-radius: var(--radius-full); background: var(--color-border); border: none; cursor: pointer; transition: background 150ms ease; flex-shrink: 0; }
+.toggle:focus { outline: none; box-shadow: 0 0 0 3px var(--color-primary-light); }
+.toggle::before { content: ''; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 50%; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: transform 150ms ease; }
+.toggle.active { background: var(--color-primary); }
+.toggle.active::before { transform: translateX(24px); }
+.toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Button styles */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); padding: 0 var(--space-4); height: 40px; font-size: var(--text-button); font-weight: 600; font-family: inherit; border: none; border-radius: var(--radius-sm); cursor: pointer; transition: all 150ms ease; touch-action: manipulation; }
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: var(--color-primary); color: white; }
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-secondary { background: var(--color-surface); color: var(--color-primary); border: 1px solid var(--color-border); }
+.btn-secondary:hover { background: var(--color-primary-light); border-color: var(--color-primary); }
+.btn-tertiary { background: transparent; color: var(--color-primary); }
+.btn-tertiary:hover { background: var(--color-primary-light); }
+.btn-destructive { background: var(--color-destructive); color: white; }
+.btn-destructive:hover { background: #B91C1C; }
+.btn-full { width: 100%; }
+
+/* Stat cards */
+.stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-3); padding: var(--space-4); }
+.stat-card { background: var(--color-background); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); text-align: center; }
+.stat-value { font-size: 24px; font-weight: 700; color: var(--color-foreground); line-height: 1.2; }
+.stat-label { font-size: var(--text-caption); color: var(--color-foreground-muted); margin-top: var(--space-1); text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* Info rows */
+.info-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
+.info-row:last-child { border-bottom: none; }
+.info-label { font-size: var(--text-body); color: var(--color-foreground); }
+.info-value { font-size: var(--text-body-sm); color: var(--color-foreground-muted); font-family: monospace; word-break: break-all; max-width: 60%; text-align: right; }
+
+/* Danger zone */
+.danger-zone { border-top: 2px solid var(--color-destructive-light); }
+.danger-zone .section-header { color: var(--color-destructive); }
+.danger-item { color: var(--color-destructive); }
+.danger-item .setting-label { color: var(--color-destructive); }
+.danger-item .btn { background: var(--color-destructive-light); color: var(--color-destructive); border: 1px solid var(--color-destructive); }
+.danger-item .btn:hover { background: var(--color-destructive); color: white; }
+
+/* Version info */
+.version-info { padding: var(--space-4); text-align: center; color: var(--color-foreground-muted); font-size: var(--text-body-sm); border-top: 1px solid var(--color-border); background: var(--color-surface); }
+.version-info a { color: var(--color-secondary); text-decoration: none; }
+.version-info a:hover { text-decoration: underline; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="app-header" role="banner">
+  <button class="back-btn" onclick="history.back()" aria-label="Back">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+  </button>
+  <h1>Settings</h1>
+  <div style="width: 40px;"></div>
+</header>
+
+<main class="settings-content" role="main">
+  <!-- Account Section -->
+  <section class="section" aria-labelledby="account-heading">
+    <header class="section-header" id="account-heading">Account</header>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Email</div>
+        <div class="setting-desc">Your account email address</div>
+      </div>
+      <div class="setting-value">user@example.com</div>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">User ID</div>
+        <div class="setting-desc">Unique identifier for your account</div>
+      </div>
+      <div class="setting-value">usr_7x9k2m4n</div>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Device ID</div>
+        <div class="setting-desc">This device's unique identifier</div>
+      </div>
+      <div class="setting-value">dev_a1b2c3d4e5f6</div>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Sign out</div>
+        <div class="setting-desc">Remove all account data from this device</div>
+      </div>
+      <button class="btn btn-destructive" onclick="confirmLogout()">Sign out</button>
+    </div>
+  </section>
+
+  <!-- Backup Status -->
+  <section class="section" aria-labelledby="backup-heading">
+    <header class="section-header" id="backup-heading">Backup Status</header>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="totalFiles">1,247</div>
+        <div class="stat-label">Total Files</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="totalSize">12.4 GB</div>
+        <div class="stat-label">Total Size</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="pendingCount">3</div>
+        <div class="stat-label">Pending Upload</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="lastSync">2 min ago</div>
+        <div class="stat-label">Last Sync</div>
+      </div>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Mega.io Status</span>
+      <span class="info-value"><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--color-accent);"></span>Connected</span></span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Identity API</span>
+      <span class="info-value"><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--color-warning);"></span>Not configured</span></span>
+    </div>
+    <div class="setting-item" style="padding-top: var(--space-4);">
+      <div class="setting-info">
+        <div class="setting-label">Sync now</div>
+        <div class="setting-desc">Manually trigger a background upload</div>
+      </div>
+      <button class="btn btn-primary" onclick="triggerSync()">Sync Now</button>
+    </div>
+  </section>
+
+  <!-- Preferences -->
+  <section class="section" aria-labelledby="prefs-heading">
+    <header class="section-header" id="prefs-heading">Preferences</header>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Auto-upload</div>
+        <div class="setting-desc">Automatically backup new files in the background</div>
+      </div>
+      <button class="toggle active" id="autoUploadToggle" aria-label="Auto-upload enabled" role="switch" aria-checked="true"></button>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Wi-Fi only</div>
+        <div class="setting-desc">Only upload when connected to Wi-Fi</div>
+      </div>
+      <button class="toggle active" id="wifiOnlyToggle" aria-label="Wi-Fi only enabled" role="switch" aria-checked="true"></button>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Backup videos</div>
+        <div class="setting-desc">Include videos in automatic backup</div>
+      </div>
+      <button class="toggle active" id="videoToggle" aria-label="Video backup enabled" role="switch" aria-checked="true"></button>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Thumbnail quality</div>
+        <div class="setting-desc">Resolution of generated thumbnails</div>
+      </div>
+      <select class="btn btn-secondary" style="height: 40px; padding: 0 var(--space-3); background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-foreground); border-radius: var(--radius-sm); font-size: var(--text-body);">
+        <option value="high">High (512px)</option>
+        <option value="medium" selected>Medium (256px)</option>
+        <option value="low">Low (128px)</option>
+      </select>
+    </div>
+  </section>
+
+  <!-- Storage -->
+  <section class="section" aria-labelledby="storage-heading">
+    <header class="section-header" id="storage-heading">Storage</header>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Mega.io Email</div>
+        <div class="setting-desc">Connected storage account</div>
+      </div>
+      <div class="setting-value">backup@stash.app</div>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Cache size</div>
+        <div class="setting-desc">Local thumbnail cache</div>
+      </div>
+      <div class="setting-value">247 MB</div>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Clear cache</div>
+        <div class="setting-desc">Remove all cached thumbnails (will re-download on view)</div>
+      </div>
+      <button class="btn btn-secondary" onclick="clearCache()">Clear Cache</button>
+    </div>
+  </section>
+
+  <!-- Advanced -->
+  <section class="section" aria-labelledby="advanced-heading">
+    <header class="section-header" id="advanced-heading">Advanced</header>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Debug logging</div>
+        <div class="setting-desc">Enable verbose logs for troubleshooting</div>
+      </div>
+      <button class="toggle" id="debugToggle" aria-label="Debug logging disabled" role="switch" aria-checked="false"></button>
+    </div>
+    <div class="setting-item">
+      <div class="setting-info">
+        <div class="setting-label">Reset database</div>
+        <div class="setting-desc">Delete all local data and start fresh</div>
+      </div>
+      <button class="btn btn-destructive" onclick="confirmResetDb()">Reset Database</button>
+    </div>
+  </section>
+
+  <!-- Danger Zone -->
+  <section class="section danger-zone" aria-labelledby="danger-heading">
+    <header class="section-header" id="danger-heading">Danger Zone</header>
+    <div class="setting-item danger-item">
+      <div class="setting-info">
+        <div class="setting-label">Delete all backups</div>
+        <div class="setting-desc">Permanently remove all files from Mega.io (cannot be undone)</div>
+      </div>
+      <button class="btn" onclick="confirmDeleteAll()">Delete All Backups</button>
+    </div>
+  </section>
+
+  <!-- About -->
+  <section class="section" aria-labelledby="about-heading">
+    <header class="section-header" id="about-heading">About</header>
+    <div class="version-info">
+      <div><strong>Stash</strong> v1.0.0 (build 2026.10.29)</div>
+      <div style="margin-top: var(--space-2);">Built with .NET 10 MAUI</div>
+      <div style="margin-top: var(--space-3);">
+        <a href="#">Privacy Policy</a> • <a href="#">Terms of Service</a> • <a href="#">Licenses</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+function confirmLogout() {
+  if (confirm('Sign out? This will remove your tokens and user data from this device.')) {
+    alert('Signing out... (would call AuthenticationService.LogoutAsync())');
+    // location.href = '01-login.html';
+  }
+}
+
+function triggerSync() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Syncing...';
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.textContent = 'Sync Now';
+    alert('Background upload triggered (would call BackgroundUploadService.RunOnceAsync())');
+    document.getElementById('lastSync').textContent = 'Just now';
+    document.getElementById('pendingCount').textContent = '0';
+    document.getElementById('syncBadge').textContent = '0';
+    document.getElementById('syncBadge').style.display = 'none';
+  }, 1000);
+}
+
+function clearCache() {
+  if (confirm('Clear all cached thumbnails? They will be re-downloaded when viewed.')) {
+    alert('Cache cleared (247 MB freed)');
+  }
+}
+
+function confirmResetDb() {
+  if (confirm('Reset database? This will delete ALL local data including folder configs and file records. This cannot be undone.')) {
+    if (confirm('Are you absolutely sure?')) {
+      alert('Database reset (would re-run EF Core migrations)');
+      location.reload();
+    }
+  }
+}
+
+function confirmDeleteAll() {
+  if (confirm('⚠️ DELETE ALL BACKUPS?\n\nThis will permanently remove ALL files from Mega.io storage. This action CANNOT BE UNDONE.\n\nType "DELETE" to confirm:')) {
+    const input = prompt('Type "DELETE" to confirm:');
+    if (input === 'DELETE') {
+      alert('All backups deleted from Mega.io (would call MegaStorageProvider.DeleteFileAsync for each file)');
+    }
+  }
+}
+
+// Toggle handlers
+document.querySelectorAll('.toggle').forEach(toggle => {
+  toggle.addEventListener('click', () => {
+    if (toggle.disabled) return;
+    toggle.classList.toggle('active');
+    toggle.setAttribute('aria-checked', toggle.classList.contains('active'));
+    // In real app: save to preferences
+  });
+});
+</script>
+</body>
+</html>

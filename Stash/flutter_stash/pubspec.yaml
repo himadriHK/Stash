@@ -1,0 +1,48 @@
+name: flutter_stash
+description: A Flutter application similar to Stash.Maui for backup and file upload
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  provider: ^6.0.0
+
+  # Core
+  equatable: ^2.0.0
+  collection: ^1.18.0
+  uuid: ^4.0.0
+
+  # Storage
+  sqflite_common_ffi: ^2.3.0
+  sqflite_common_ffi_web: ^0.4.0
+  flutter_secure_storage: ^11.2.0
+  path_provider: ^2.0.0
+  path: ^1.8.0
+
+  # HTTP & Network
+  http: ^1.0.0
+  dio: ^5.0.0
+
+  # Image & File
+  image_picker: ^1.0.0
+  file_picker: ^13.3.1
+
+  # Logging
+  logger: ^2.0.0
+
+  # Google Fonts
+  google_fonts: ^9.0.0
+
+  # Crypto for SHA-256
+  crypto: ^3.0.0
+
+devDependencies:
+  flutter_test:
+    sdk: flutter

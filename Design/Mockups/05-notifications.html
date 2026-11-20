@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stash — Notification Center</title>
+<style>
+:root {
+  --color-primary: #2563EB; --color-primary-hover: #1D4ED8; --color-primary-light: #DBEAFE;
+  --color-secondary: #3B82F6; --color-accent: #059669; --color-background: #F8FAFC;
+  --color-surface: #FFFFFF; --color-foreground: #0F172A; --color-foreground-muted: #64748B;
+  --color-border: #E2E8F0; --color-border-strong: #CBD5E1; --color-destructive: #DC2626;
+  --color-destructive-light: #FEF2F2; --color-warning: #D97706; --color-warning-light: #FFFBEB;
+  --color-ring: #2563EB;
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --text-h1: 28px; --text-h2: 22px; --text-h3: 18px; --text-body-lg: 16px; --text-body: 15px;
+  --text-body-sm: 13px; --text-caption: 12px; --text-button: 15px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px; --radius-full: 9999px;
+  --elevation-1: 0 1px 2px rgba(15,23,42,0.05); --elevation-2: 0 4px 8px rgba(15,23,42,0.08);
+  --header-height: 56px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #3B82F6; --color-primary-hover: #60A5FA; --color-primary-light: #1E3A5F;
+    --color-secondary: #60A5FA; --color-accent: #34D399; --color-background: #0F172A;
+    --color-surface: #1E293B; --color-foreground: #F8FAFC; --color-foreground-muted: #94A3B8;
+    --color-border: #334155; --color-border-strong: #475569; --color-destructive: #EF4444;
+    --color-destructive-light: #450A0A; --color-warning: #FBBF24; --color-warning-light: #451A03;
+    --color-ring: #3B82F6; --elevation-1: 0 1px 2px rgba(0,0,0,0.3); --elevation-2: 0 4px 8px rgba(0,0,0,0.4);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+body { font-family: var(--font-family); background: var(--color-background); color: var(--color-foreground); line-height: 1.5; min-height: 100vh; display: flex; flex-direction: column; }
+
+.app-header { position: sticky; top: 0; z-index: 100; height: var(--header-height); background: var(--color-background); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; padding: 0 var(--space-4); }
+.app-header h1 { font-size: var(--text-h1); font-weight: 700; letter-spacing: -0.01em; }
+.back-btn { width: 40px; height: 40px; border: none; background: transparent; color: var(--color-foreground); border-radius: var(--radius-full); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 150ms ease; }
+.back-btn:hover { background: var(--color-muted); }
+.back-btn svg { width: 24px; height: 24px; }
+
+.notifications-content { flex: 1; overflow-y: auto; padding: var(--space-4); }
+
+.section { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-bottom: var(--space-4); overflow: hidden; }
+.section-header { padding: var(--space-4) var(--space-4) var(--space-2); font-size: var(--text-caption); font-weight: 600; color: var(--color-foreground-muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--color-background); border-bottom: 1px solid var(--color-border); }
+.section:first-child .section-header { border-top: none; }
+
+.tab-nav { display: flex; background: var(--color-background); border-bottom: 1px solid var(--color-border); }
+.tab-nav button { flex: 1; padding: var(--space-3) var(--space-4); font-size: var(--text-body); font-weight: 500; color: var(--color-foreground-muted); background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; transition: color 150ms ease; }
+.tab-nav button.active { color: var(--color-foreground); border-bottom-color: var(--color-primary); }
+.tab-nav button:not(.active):hover { color: var(--color-foreground); }
+
+/* Tab panels */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.notification-item { display: flex; align-items: flex-start; padding: var(--space-4) var(--space-4) 0; border-bottom: 1px solid var(--color-border); min-height: 72px; }
+.notification-item:last-child { border-bottom: none; }
+.notification-item.unread { background: var(--color-primary-light); }
+.notification-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-destructive); position: absolute; right: var(--space-4); top: var(--space-4); }
+.notification-item.unread .dot { display: block; }
+.notification-item.read .dot { display: none; }
+.notification-item .icon { flex-shrink: 0; margin-top: var(--space-2); margin-right: var(--space-3); }
+.notification-item .icon svg { width: 32px; height: 32px; }
+.notification-item .content { flex: 1; }
+.notification-item .title { font-size: var(--text-body); font-weight: 500; color: var(--color-foreground); margin-bottom: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70%; }
+.notification-item .subtitle { font-size: var(--text-caption); color: var(--color-foreground-muted); margin-bottom: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70%; }
+.notification-item .time { font-size: var(--text-caption); color: var(--color-foreground-muted); white-space: nowrap; }
+
+.clear-btn { padding: var(--space-4) 0; text-align: right; }
+.clear-btn .btn { width: auto; }
+
+/* Empty State */
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; text-align: center; padding: var(--space-8); color: var(--color-foreground-muted); }
+.empty-state svg { width: 120px; height: 120px; stroke: var(--color-border); margin-bottom: var(--space-4); }
+.empty-state h2 { font-size: var(--text-h3); font-weight: 600; color: var(--color-foreground); margin-bottom: var(--space-2); }
+.empty-state p { font-size: var(--text-body); max-width: 280px; margin-bottom: var(--space-6); }
+.empty-state .btn { width: auto; min-width: 160px; }
+
+/* Status colors */
+.status-synced { color: var(--color-accent); }
+.status-uploading { color: var(--color-primary); animation: pulse 1.5s infinite; }
+.status-failed { color: var(--color-destructive); }
+.status-pending { color: var(--color-warning); }
+
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="app-header" role="banner">
+  <button class="back-btn" onclick="history.back()" aria-label="Back">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+  </button>
+  <h1>Notifications</h1>
+</header>
+
+<main class="notifications-content" role="main">
+  <div class="tab-nav" role="tablist" aria-label="Notification tabs">
+    <button class="active" role="tab" aria-selected="true">All</button>
+    <button role="tab" aria-selected="false">Uploads</button>
+    <button role="tab" aria-selected="false">Errors</button>
+    <button role="tab" aria-selected="false">Synced</button>
+  </div>
+
+  <div class="tab-panel active" id="tab-all" role="tabpanel">
+    <div id="notificationsAll" role="list"></div>
+  </div>
+  <div class="tab-panel" id="tab-uploads" role="tabpanel">
+    <div id="notificationsUploads" role="list"></div>
+  </div>
+  <div class="tab-panel" id="tab-errors" role="tabpanel">
+    <div id="notificationsErrors" role="list"></div>
+  </div>
+  <div class="tab-panel" id="tab-synced" role="tabpanel">
+    <div id="notificationsSynced" role="list"></div>
+  </div>
+</main>
+
+<script>
+// Mock notification data
+const mockNotifications = [
+  { id: 1, title: 'Backup Completed', subtitle: 'IMG_001.jpg • 2 min ago', status: 'synced', type: 'upload', time: '2 min ago' },
+  { id: 2, title: 'Upload in Progress', subtitle: 'VID_001.mov • 15 min ago', status: 'uploading', type: 'upload', time: '15 min ago' },
+  { id: 3, title: 'Upload Failed', subtitle: 'IMG_004.jpg • 45 min ago', status: 'failed', type: 'upload', time: '45 min ago' },
+  { id: 4, title: 'Folder Added', subtitle: 'Pictures folder added • 1 hour ago', status: 'synced', type: 'folder', time: '1 hour ago' },
+  { id: 5, title: 'Sync Completed', subtitle: 'All files synced • 2 hours ago', status: 'synced', type: 'sync', time: '2 hours ago' },
+  { id: 6, title: 'Storage Full', subtitle: 'Mega.io nearly at capacity • 3 hours ago', status: 'warning', type: 'storage', time: '3 hours ago' },
+  { id: 7, title: 'Backup Completed', subtitle: 'IMG_002.jpg • 6 hours ago', status: 'synced', type: 'upload', time: '6 hours ago' },
+  { id: 8, title: 'Upload Failed', subtitle: 'VID_002.mov • 8 hours ago', status: 'failed', type: 'upload', time: '8 hours ago' },
+];
+
+function renderNotifications(filter = 'all') {
+  const tabs = document.querySelectorAll('.tab-nav button');
+  tabs.forEach((btn, idx) => {
+    btn.classList.toggle('active', idx === 0); // Simplified: only All active for demo
+    btn.setAttribute('aria-selected', idx === 0);
+  });
+
+  // Show/hide panels
+  document.querySelectorAll('.tab-panel').forEach((panel, idx) => {
+    panel.classList.toggle('active', idx === 0);
+  });
+
+  // Filter notifications
+  const allList = document.getElementById('notificationsAll');
+  const uploadList = document.getElementById('notificationsUploads');
+  const errorList = document.getElementById('notificationsErrors');
+  const syncedList = document.getElementById('notificationsSynced');
+
+  // Clear lists
+  allList.innerHTML = '';
+  uploadList.innerHTML = '';
+  errorList.innerHTML = '';
+  syncedList.innerHTML = '';
+
+  mockNotifications.forEach(notif => {
+    const item = document.createElement('div');
+    item.className = 'notification-item' + (notif.status !== 'synced' ? ' unread' : ' read');
+    item.dataset.id = notif.id;
+    item.innerHTML = `
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          ${notif.type === 'upload' ? '<polygon points="23 11 19 15 15 19 11 13 7 15 3 15 7 11"/>' : 
+           notif.type === 'folder' ? '<path d="M12 5v.01L18 12H6l6-6h12z"/>' : 
+           '<path d="M12 2v4h.01M12 12v4h.01M12 22v4h.01M12 3.5l.01-.01M12 17.5l.01-.01M12 7.5l.01-.01M12 12.5l.01-.01M12 21.5l.01-.01"/></svg>'
+        }
+      </div>
+      <div class="content">
+        <div class="title">${notif.title}</div>
+        <div class="subtitle">${notif.subtitle}</div>
+      </div>
+      <div class="time">${notif.time}</div>
+    `;
+    
+    // Append to appropriate list
+    if (filter === 'all' || notif.status === 'failed') {
+      errorList.appendChild(item.cloneNode(true));
+    }
+    if (filter === 'all' || notif.type === 'upload') {
+      uploadList.appendChild(item.cloneNode(true));
+    }
+    if (filter === 'all' || notif.status === 'synced') {
+      syncedList.appendChild(item.cloneNode(true));
+    }
+    allList.appendChild(item.cloneNode(true));
+  });
+}
+
+document.querySelectorAll('.tab-nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-nav button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+renderNotifications();
+</script>
+</body>
+</html>
