@@ -42,17 +42,26 @@ export interface KafkaConfig {
   Proxy: KafkaProxyConfig;
 }
 
-export interface MegaConfig {
-  /** MEGA account the app logs into with react-native-mega. */
-  Email: string;
-  Password: string;
-  /** Optional TOTP code for accounts with two-factor authentication. */
-  SecondFactorCode: string;
+export interface S3Config {
+  Bucket: string;
+  Region: string;
+  AccessKeyId: string;
+  SecretAccessKey: string;
+  /** Optional temporary-credential token (STS / IAM role). */
+  SessionToken: string;
+  /** Custom endpoint, e.g. https://minio.example.com or R2. Empty = AWS. */
+  Endpoint: string;
+  /** Path-style is required by MinIO and most S3-compatible servers. */
+  ForcePathStyle: boolean;
+  /** Optional key prefix, no leading/trailing slash. */
+  Prefix: string;
+  /** Presigned URL lifetime in seconds (1..604800). */
+  PresignExpirySeconds: number;
 }
 
 export interface StorageConfig {
   Provider: string;
-  Mega: MegaConfig;
+  S3: S3Config;
 }
 
 export interface JwtConfig {
@@ -62,8 +71,12 @@ export interface JwtConfig {
 
 export interface UploadSettings {
   BatchSize: number;
+  /** Host processing attempts, tracked separately from transfer retries. */
+  MaxHostRetries: number;
   MaxRetries: number;
   MaxFileSizeBytes: number;
+  /** Max declared bytes in one upload batch; 0 or less means unlimited. */
+  MaxConcurrentBytes: number;
 }
 
 export interface BackgroundUploadConfig {
@@ -90,6 +103,24 @@ export interface StashConfig {
 
 const resolveEnv = (value: string | undefined, fallback: string): string =>
   value !== undefined && value !== '' ? value : fallback;
+
+/** Treats `1`/`true`/`yes`/`on` (case-insensitive) as true; empty keeps the default. */
+const resolveBool = (value: string | undefined, fallback: boolean): boolean => {
+  if (value === undefined || value.trim() === '') {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+};
+
+/** Parses a numeric override; empty or non-numeric values keep the default. */
+const resolveNumber = (value: string | undefined, fallback: number): number => {
+  if (value === undefined || value.trim() === '') {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 export const appConfig: StashConfig = {
   ...(rawConfig as StashConfig),
@@ -125,18 +156,44 @@ export const appConfig: StashConfig = {
   },
   Storage: {
     ...rawConfig.Storage,
-    Mega: {
-      ...rawConfig.Storage.Mega,
-      Email: resolveEnv(process.env.EXPO_PUBLIC_MEGA_EMAIL, rawConfig.Storage.Mega.Email),
-      Password: resolveEnv(
-        process.env.EXPO_PUBLIC_MEGA_PASSWORD,
-        rawConfig.Storage.Mega.Password,
+    S3: {
+      ...rawConfig.Storage.S3,
+      Bucket: resolveEnv(process.env.EXPO_PUBLIC_S3_BUCKET, rawConfig.Storage.S3.Bucket),
+      Region: resolveEnv(process.env.EXPO_PUBLIC_S3_REGION, rawConfig.Storage.S3.Region),
+      AccessKeyId: resolveEnv(
+        process.env.EXPO_PUBLIC_S3_ACCESS_KEY_ID,
+        rawConfig.Storage.S3.AccessKeyId,
       ),
-      SecondFactorCode: resolveEnv(
-        process.env.EXPO_PUBLIC_MEGA_SECOND_FACTOR_CODE,
-        rawConfig.Storage.Mega.SecondFactorCode,
+      SecretAccessKey: resolveEnv(
+        process.env.EXPO_PUBLIC_S3_SECRET_ACCESS_KEY,
+        rawConfig.Storage.S3.SecretAccessKey,
+      ),
+      SessionToken: resolveEnv(
+        process.env.EXPO_PUBLIC_S3_SESSION_TOKEN,
+        rawConfig.Storage.S3.SessionToken,
+      ),
+      Endpoint: resolveEnv(process.env.EXPO_PUBLIC_S3_ENDPOINT, rawConfig.Storage.S3.Endpoint),
+      ForcePathStyle: resolveBool(
+        process.env.EXPO_PUBLIC_S3_FORCE_PATH_STYLE,
+        rawConfig.Storage.S3.ForcePathStyle,
+      ),
+      Prefix: resolveEnv(process.env.EXPO_PUBLIC_S3_PREFIX, rawConfig.Storage.S3.Prefix),
+      PresignExpirySeconds: resolveNumber(
+        process.env.EXPO_PUBLIC_S3_PRESIGN_EXPIRY_SECONDS,
+        rawConfig.Storage.S3.PresignExpirySeconds,
       ),
     },
+  },
+  UploadSettings: {
+    ...rawConfig.UploadSettings,
+    MaxHostRetries: resolveNumber(
+      process.env.EXPO_PUBLIC_UPLOAD_MAX_HOST_RETRIES,
+      rawConfig.UploadSettings.MaxHostRetries,
+    ),
+    MaxConcurrentBytes: resolveNumber(
+      process.env.EXPO_PUBLIC_UPLOAD_MAX_CONCURRENT_BYTES,
+      rawConfig.UploadSettings.MaxConcurrentBytes,
+    ),
   },
   ApplicationInsights: {
     ...rawConfig.ApplicationInsights,

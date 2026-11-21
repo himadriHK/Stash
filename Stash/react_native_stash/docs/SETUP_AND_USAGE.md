@@ -4,14 +4,24 @@ A complete guide to installing, configuring and operating the React Native
 (Expo) recreation of **Stash.Maui**. The app keeps the MAUI look — exact
 palette, OpenSans typography, form/button styling, light + dark appearance —
 and reimplements the documented feature set: Identity API authentication,
-SQLite storage with SHA-256 deduplication, folder scanning, direct MEGA upload
-through the local `react-native-mega` client, Kafka REST messaging and the
+SQLite storage with SHA-256 deduplication, folder scanning, direct S3 upload
+through presigned AWS Signature V4 URLs, Kafka REST messaging and the
 15-minute background upload pass.
 
 > To run the app against the real backend (Identity API, Functions host, MongoDB,
-> Aiven Kafka and MEGA) on one machine, use the repository-wide runbook:
+> Aiven Kafka and the backend's storage provider) on one machine, use the
+> repository-wide runbook:
 > **[../../docs/LOCAL_FULL_STACK_SETUP.md](../../docs/LOCAL_FULL_STACK_SETUP.md)**.
 > This document stays client-only: it explains the app itself and its contracts.
+>
+> **Compatibility note:** the client now uploads to S3 and publishes upload
+> requests as version 2. The backend in this repository still uses MEGA and a
+> version-1 validator, so the runbook above cannot complete the upload flow
+> end-to-end until the host supports S3 and accepts version 2. See §11.
+
+> **Architecture & data flow:** see **[ARCHITECTURE.md](ARCHITECTURE.md)** for the runtime shell, SQLite schema, scanner and upload pipeline, background pass, S3 internals, Kafka contract and platform matrix.
+
+> **Implementation plan:** see **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)** for the reliability, performance and observability roadmap and tracker.
 
 ---
 
@@ -31,18 +41,19 @@ react_native_stash/
     models/               entities, Kafka message contracts, upload status
     navigation/           auth-gated stack + 5-tab main shell
     screens/              Login, Register, Files, Upload, Folders, Settings, About
-    services/             scanner, MEGA client (react-native-mega) + file
-                          adapters, upload manager, Kafka REST producer/
-                          consumer, background pass + scheduler, singletons
+    services/             scanner, storage provider interface + factory, S3
+                          service, pure-JS SigV4 presigner, presigned transfer
+                          adapter, upload manager, Kafka REST producer/consumer,
+                          background pass + scheduler, singletons
+      storage/            storageProvider.ts, storageProviderFactory.ts,
+                          s3StorageService.ts, s3Signing.ts, s3Transfer.ts
     theme/                colors, typography, ThemeContext
-    utils/                secure storage, base64, formatting, ids, MEGA name
-                          mapping (ports the host's MegaPathMapper)
+    utils/                secure storage, base64, formatting, ids, file access
 ```
 
 Related documents at the repository root: `ReactNativeStashPlan.md` (the
-plan/spec this implementation follows), `ReactNativeMegaStashIntegrationPlan.md`
-(the MEGA transport migration), `FlutterStash*.md` (the original UI and feature
-documentation), and `Stash.Maui/` (the .NET reference app).
+plan/spec this implementation follows), `FlutterStash*.md` (the original UI and
+feature documentation), and `Stash.Maui/` (the .NET reference app).
 
 ---
 
@@ -59,9 +70,11 @@ documentation), and `Stash.Maui/` (the .NET reference app).
 
 The app runs in **Expo Go** as-is: `expo-sqlite`, `expo-secure-store`,
 `expo-document-picker`, `expo-file-system`, `expo-crypto` and `expo-font` are
-all supported by Expo Go — no custom development build is required.
+all supported by Expo Go. The S3 client adds no native module — SigV4 signing
+uses the pure-JS `js-sha256` package and transfers use Expo FileSystem — so
+there is **no SDK build step and no custom development build** required.
 
-Backend services (Identity API, MEGA account, Kafka REST proxy) are **optional**.
+Backend services (Identity API, S3 bucket, Kafka REST proxy) are **optional**.
 Without them the UI, navigation, theming, local database and scanning all work;
 network-dependent actions surface an explanatory error instead.
 
@@ -69,27 +82,20 @@ network-dependent actions surface an explanatory error instead.
 
 ## 3. Installation
 
-The app depends on the sibling `react-native-mega` package through
-`file:../react-native-mega`. The package is consumed from its compiled `dist/`,
-which is not committed, so build it first:
+Install dependencies in the app only:
 
 ```bash
-cd react-native-mega
-npm install
-npm run build
-
-cd ../react_native_stash
+cd react_native_stash
 npm install
 ```
 
-Re-run `npm run build` in `react-native-mega` after changing its `src/` (Metro
-watches the package, but it resolves `dist/`).
+There is no sibling package to build and no `file:` dependency: the S3 storage
+implementation is part of `src/services/storage/`.
 
 Clean install if dependencies ever look broken:
 
 ```bash
-cd react-native-mega && npm install && npm run build
-cd ../react_native_stash
+cd react_native_stash
 rm -rf node_modules .expo
 npm install
 ```
@@ -117,18 +123,21 @@ editing either file** — changes are not hot-reloaded.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `IdentityApiBaseUrl` | `EXPO_PUBLIC_IDENTITY_API_BASE_URL` | Base URL of the Identity API, e.g. `https://auth.example.com`. **Empty means the app cannot sign in** and shows “Identity API base URL is not configured.” |
+| `IdentityApiBaseUrl` | `EXPO_PUBLIC_IDENTITY_API_BASE_URL` | Identity API origin: the Vercel function (`https://<vercel-project>.vercel.app`) or the local .NET service (`http://localhost:5102`). **Empty means the app cannot sign in** and shows “Identity API base URL is not configured.” |
 | `IdentityApiTimeoutSeconds` | `30` | Timeout for auth requests (register/login/refresh). |
 | `Auth.Jwt.Issuer` | `"stash-auth"` | Expected token issuer (informational / validation parity). |
 | `Auth.Jwt.Audience` | `"stash-app"` | Expected token audience. |
+
+Set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` to `https://<vercel-project>.vercel.app` (deployed Vercel function) or `http://localhost:5102` (local .NET API); no trailing slash is required. The Vercel function serves `POST /api/auth/register|login|refresh|revoke` and `GET /api/auth/health`; the health route is the liveness check.
 
 ### 4.2 Upload settings
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `UploadSettings.BatchSize` | `10` | Files per upload batch. |
+| `UploadSettings.BatchSize` | `10` | Maximum files per upload batch (also bounded by `MaxConcurrentBytes`). |
 | `UploadSettings.MaxRetries` | `3` | Retry attempts before a file is marked `Failed` and dead-lettered. |
 | `UploadSettings.MaxFileSizeBytes` | `524288000` | 500 MB per-file limit. Larger files are flagged instead of uploaded. |
+| `UploadSettings.MaxConcurrentBytes` | `268435456` | 256 MB declared-bytes budget per upload batch (`0` or less = unlimited). A single larger file runs alone. |
 
 ### 4.3 Background upload pass
 
@@ -138,41 +147,61 @@ editing either file** — changes are not hot-reloaded.
 | `BackgroundUpload.IntervalMinutes` | `15` | Pass interval, matching the documented 15-minute cadence. |
 | `BackgroundUpload.MaxFilesPerRun` | `50` | Cap of files handled per run (`0` or less = unlimited). |
 
-### 4.4 Storage (MEGA)
+### 4.4 Storage (S3)
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `Storage.Provider` | `"Mega"` | Storage provider label (shown in Settings). |
-| `Storage.Mega.Email` | `EXPO_PUBLIC_MEGA_EMAIL` | MEGA account the app logs into with `react-native-mega`. Empty means uploads fail with “MEGA account is not configured.” |
-| `Storage.Mega.Password` | `EXPO_PUBLIC_MEGA_PASSWORD` | Password for that account (used for the MEGA login, never sent as a header). |
-| `Storage.Mega.SecondFactorCode` | `EXPO_PUBLIC_MEGA_SECOND_FACTOR_CODE` | Optional TOTP code for accounts with two-factor authentication; leave empty otherwise. |
+| `Storage.Provider` | `"S3"` | Storage provider. `S3` is the only supported value (case-insensitive); anything else fails with “Unsupported storage provider”. |
+| `Storage.S3.Bucket` | `EXPO_PUBLIC_S3_BUCKET` | Target bucket. Empty makes uploads fail with “Amazon S3 is not configured…”. |
+| `Storage.S3.Region` | `us-east-1` | Region used in the SigV4 credential scope and the default AWS endpoint. |
+| `Storage.S3.AccessKeyId` | `EXPO_PUBLIC_S3_ACCESS_KEY_ID` | Access key used to sign presigned URLs. |
+| `Storage.S3.SecretAccessKey` | `EXPO_PUBLIC_S3_SECRET_ACCESS_KEY` | Secret key used to sign presigned URLs. |
+| `Storage.S3.SessionToken` | empty | Optional STS/role session token. When set it is added to the URL as `X-Amz-Security-Token`. |
+| `Storage.S3.Endpoint` | empty (AWS) | Custom S3-compatible endpoint, e.g. `https://minio.example.com` or a Cloudflare R2 endpoint. Must start with `http://` or `https://`. |
+| `Storage.S3.ForcePathStyle` | `false` | Use path-style addressing (`https://host/bucket/key`). Required by MinIO and many S3-compatible servers. |
+| `Storage.S3.Prefix` | empty | Optional key prefix (leading/trailing slashes are stripped), e.g. `stash`. |
+| `Storage.S3.PresignExpirySeconds` | `3600` | Presigned URL lifetime, clamped to 1–604800 seconds. |
 
-There is no MEGA base URL: `src/services/megaHttpService.ts` creates a
-`MegaStorage` session through `src/services/megaClient.ts` and talks to
-`api.mega.co.nz` directly (§8). The SDK performs the protocol cryptography in
-pure JS (`@noble/ciphers` + `@noble/hashes`), so Hermes needs no WebCrypto or
-stream polyfills. Login passes `expo-crypto`'s secure RNG and native SHA-256
-(the latter for MEGA's hashcash proof-of-work). No development build or native
-module is required.
+The app never logs into a storage account or calls a host upload endpoint. It
+generates a presigned URL on the device and transfers directly to S3:
 
-A full MEGA login is expensive (a 100k-round PBKDF2 in JS, an RSA session-id
-decrypt, four sequential API calls and sometimes a hashcash proof of work), so
-the session returned by the SDK is cached in secure storage under
-`stash.mega.session`. Later launches resume with `MegaStorage.fromSession`
-(one tree fetch, no password work) and fall back to a password login only when
-MEGA rejects the stored session. `App.tsx` also warms the session in the
-background once the user is authenticated, so the first upload does not wait
-for authentication. Delete the key (or the app data) to force a fresh login.
+- **AWS:** leave `Endpoint` empty. Virtual-hosted addressing is used
+  (`https://{bucket}.s3.{region}.amazonaws.com/{key}`), and `ForcePathStyle`
+  stays `false`.
+- **MinIO / custom S3-compatible servers:** set `Endpoint` (for example
+  `http://localhost:9000`) and `ForcePathStyle = true`. Use the region the
+  server expects (MinIO commonly accepts `us-east-1`).
+- **Cloudflare R2 and similar:** set the provider's S3 endpoint and the region
+  it documents; enable path-style only if the provider requires it.
+- **Temporary credentials (STS / IAM role):** set `SessionToken` together with
+  the matching access key and secret. All three values rotate together; an
+  expired token makes requests fail with `403`.
+- **Prefix:** the bucket key is the optional prefix plus the logical path
+  without its leading slash. With `Prefix = "stash"`, the default temp object is
+  `stash/temp/uploads/{deviceId}/{contentHash}/{fileName}`. The app still stores and
+  sends the logical path `/temp/uploads/{deviceId}/{contentHash}/{fileName}`.
+- **Presign expiry:** choose a value long enough for the upload/download to
+  finish but no longer than the credentials' remaining lifetime. The signer
+  clamps out-of-range values to 1–604800 seconds.
 
-MEGA may also answer the password login with a **hashcash proof of work**. Each
-candidate hashes a 12.58 MB buffer and a typical challenge (`1:192:…`) accepts
-about one candidate in 256, so the phase inherently costs ~3.2 GB of SHA-256 —
-typically 5–15 s on a phone, during which `expo-crypto`'s synchronous native
-digest occupies the JS thread. Nothing can be reused between candidates (the
-counter is in the first block), so the app's levers are the stored session above
-(no challenge on resume), the native digest, and `hashcashConcurrency`, which it
-sets above 1 only on web where `crypto.subtle` hashes off the JS thread. The solve
-is cancellable and reports progress through `hashcashProgress`.
+Minimal S3 `.env` example:
+
+```bash
+EXPO_PUBLIC_S3_BUCKET=stash-uploads
+EXPO_PUBLIC_S3_REGION=us-east-1
+EXPO_PUBLIC_S3_ACCESS_KEY_ID=
+EXPO_PUBLIC_S3_SECRET_ACCESS_KEY=
+EXPO_PUBLIC_S3_SESSION_TOKEN=
+EXPO_PUBLIC_S3_ENDPOINT=
+EXPO_PUBLIC_S3_PREFIX=
+EXPO_PUBLIC_S3_FORCE_PATH_STYLE=false
+EXPO_PUBLIC_S3_PRESIGN_EXPIRY_SECONDS=3600
+```
+
+> **Credentials are inlined.** `EXPO_PUBLIC_*` values end up in the client
+> bundle. Use a scoped key/role that can only `PutObject`, `GetObject`,
+> `DeleteObject` and `HeadObject` on this bucket/prefix, and rotate anything
+> that was ever committed.
 
 ### 4.5 Kafka transport (Vercel proxy or REST proxy)
 
@@ -217,12 +246,14 @@ Minimal working configuration:
 
 ```bash
 # .env (git-ignored) — copy from .env.example
-EXPO_PUBLIC_IDENTITY_API_BASE_URL=https://auth.example.com
+EXPO_PUBLIC_IDENTITY_API_BASE_URL=https://<vercel-project>.vercel.app
 EXPO_PUBLIC_KAFKA_REST_URL=https://kafka-rest.example.com/
 EXPO_PUBLIC_KAFKA_REST_USERNAME=
 EXPO_PUBLIC_KAFKA_REST_PASSWORD=
-EXPO_PUBLIC_MEGA_EMAIL=stash@example.com
-EXPO_PUBLIC_MEGA_PASSWORD=
+EXPO_PUBLIC_S3_BUCKET=stash-uploads
+EXPO_PUBLIC_S3_REGION=us-east-1
+EXPO_PUBLIC_S3_ACCESS_KEY_ID=
+EXPO_PUBLIC_S3_SECRET_ACCESS_KEY=
 ```
 
 Keep the shipped `appconfig.json` for non-secret defaults; only the `.env`
@@ -254,6 +285,8 @@ Notes:
 - Web uses `localStorage` for the auth/theme keys instead of the native secure
   store; it is a development convenience, not a hardened secret store.
 - The document picker becomes a normal browser file input.
+- Web uploads/downloads call S3 from the browser, so the bucket must allow CORS
+  from the Expo origin (`PUT`, `GET`, `HEAD`; see §12).
 - A static build is produced with `npx expo export --platform web` → `dist/`.
   Serve it over HTTP with the same COOP/COEP headers if you need SQLite there.
 
@@ -278,6 +311,7 @@ npx expo start           # scan the QR code with the Camera app on a device
 ### 5.4 Type checking and production bundles
 
 ```bash
+npm run typecheck                   # npm script for the same strict check
 npx tsc --noEmit                    # strict TypeScript check, must exit 0
 npx expo export --platform web      # static web bundle
 npx expo export --platform android  # JS bundle for Android
@@ -349,7 +383,8 @@ The signed-in shell has five tabs plus a header with the app title and a
 - **Pull down to refresh** — runs the background upload pass immediately
   (scan enabled folders → dedup → upload → publish → bookkeeping).
 - **Tap a card** → details dialog: path, size, status, MIME type, SHA-256 hash,
-  retries, Mega temp path, permanent path, device id, last attempt, error text.
+  retries, storage temp path (the logical S3 path), permanent path, device id,
+  last attempt, error text.
 - **Tap ⋯ on a card** → actions: **Retry upload** (only for `Failed` /
   `Retrying` files), **Details**, **Close**.
 - **Upload FAB** (cloud icon) jumps to the Upload tab.
@@ -361,10 +396,11 @@ The signed-in shell has five tabs plus a header with the app title and a
    (`expo-document-picker`, `image/*` + `video/*`, multi-select).
 2. Picked files are listed with sizes; a file above the 500 MB limit is flagged,
    and the ✕ on a row removes it from the selection.
-3. Tap **Upload Files**. The app hashes each file (SHA-256, chunked reads),
-   skips duplicates already present by hash, inserts new rows as `Pending`,
-   uploads to Mega in batches, and publishes Kafka upload requests for the
-   uploaded files.
+3. Tap **Upload Files**. The app hashes each file (native
+   `File.digest('SHA-256')` on iOS/Android, `crypto.subtle` on web), skips
+   duplicates already present by hash, inserts new rows as `Pending`,
+   uploads to S3 in batches through presigned PUT URLs, and publishes Kafka
+   upload requests for the uploaded files.
 4. A toast summarises the outcome, e.g.
    `Uploaded: 3, Queued: 1, Failed: 0, Duplicates skipped: 2`.
 5. While work is in flight the button shows **Uploading…** and is disabled.
@@ -373,19 +409,29 @@ Signing in is required; otherwise the app shows *“Sign in to upload files.”*
 
 ### 7.3 Folders
 
-- **＋ FAB** (or the empty-state **Add Folder** button) opens the add dialog.
-  Duplicate paths are rejected with *“This folder is already configured.”*
-- Each row shows the folder name/path with an enable switch — the background
-  pass and *Scan now* only consider enabled folders.
+- **＋ FAB** (or the empty-state **Add Folder** button) opens **Add Folder**.
+  Tap **Choose Folder** to use the system folder picker
+  (`Directory.pickDirectoryAsync()`); the picked name and URI are stored.
+  **Enter a path manually** remains under the dialog for development and legacy
+  locations. Duplicate paths are rejected with *“This folder is already
+  configured.”*
+- On Android, system-picked folders use per-folder SAF grants and do not need
+  broad storage permissions. Manual non-`content://` paths still request storage
+  access before they are added.
+- On iOS, folder access is granted for the current session; re-select the folder
+  after the app restarts.
+- Each row shows the folder name with an enable switch — the background pass
+  and *Scan now* only consider enabled folders. System-picked folders show a
+  friendly “System folder” subtitle instead of the long URI.
 - **Tap a row** for actions: **Scan now** (scan this folder immediately and
   report `Scanned N files, M new`), **Delete**, **Close**.
 - Default include patterns are the 14 documented media patterns:
   `*.jpg *.jpeg *.png *.heic *.heif *.raw *.dng *.cr2 *.nef *.arw *.mov *.mp4
   *.avif *.webp`, with recursive subfolder walks.
 
-Folder paths are host paths as recorded in `folder_configs`; the scanner walks
-them with `expo-file-system` (on web, only bundled/available URIs can be
-read, so scanning is primarily a native feature).
+The scanner enumerates the configured folder with `Directory.list()` and hashes
+files natively with `File.digest('SHA-256')`. Folder scanning is native-only; in
+the browser use Upload → Pick Files.
 
 ### 7.4 Settings
 
@@ -393,10 +439,16 @@ read, so scanning is primarily a native feature).
   `stash.theme.mode` and drives the palette everywhere.
 - **Account** — current **User ID** and **Device ID**, and **Log out**.
 - **Configuration** — read-only readout of the effective values: Identity API,
-  request timeout, storage provider, batch size, max retries, max file size,
-  background cadence, files per run, Kafka REST proxy and the three topics.
-  This is the quickest way to verify a deployment picked up the right
-  `appconfig.json` plus `.env` values.
+  request timeout, storage provider, storage bucket, storage region, batch
+  size, max retries, max file size, background cadence, files per run, Kafka
+  REST proxy and the three topics. This is the quickest way to verify a
+  deployment picked up the right `appconfig.json` plus `.env` values.
+- **Diagnostics** — a read-only health snapshot (files by status, stuck
+  uploads/processing, outbox state, hash-cache and processed-response
+  counts, last background pass/flush/Kafka response, recent `file_events`),
+  refreshed on focus or with **Refresh diagnostics**. The same section keeps
+  the legacy manual-path permission controls and the error-log show/clear
+  actions.
 
 ### 7.5 About
 
@@ -422,8 +474,8 @@ For each file the app records a row in `files` and moves it through:
 | `Pending` | Discovered/picked, not processed yet | grey `#9E9E9E` |
 | `Scanning` | Folder scan in progress | blue `#2196F3` |
 | `Hashing` | Computing SHA-256 | orange `#FF9800` |
-| `Uploading` | Sending bytes to Mega | purple `#9C27B0` |
-| `Uploaded` | Stored in Mega temp storage | green `#4CAF50` |
+| `Uploading` | Sending bytes to S3 | purple `#9C27B0` |
+| `Uploaded` | Stored in S3 temp storage | green `#4CAF50` |
 | `Processing` | Kafka request published, awaiting host result | indigo `#3F51B5` |
 | `Completed` | Host confirmed the permanent copy | teal `#009688` |
 | `Failed` | Upload/publish failed (retry available) | red `#F44336` |
@@ -432,39 +484,50 @@ For each file the app records a row in `files` and moves it through:
 
 Steps performed by the upload manager:
 
-1. **Hash** — SHA-256 of the file contents (chunked reads via
-   `expo-file-system`; `js-sha256`).
+1. **Hash** — SHA-256 of the file contents: native `File.digest('SHA-256')`
+   (with a `content://` cache-copy fallback); web `crypto.subtle` with a
+   `js-sha256` fallback.
 2. **Dedup** — `existsByContentHashAsync(hash)`; `content_hash` is `UNIQUE`, so
    the same bytes are never uploaded twice.
-3. **Batch** — files are grouped by `UploadSettings.BatchSize`.
-4. **MEGA upload** — `src/services/megaHttpService.ts` opens the local file as
-   a chunked `ByteSource` (`src/services/megaFileAdapters.ts`) and calls
-   `storage.root.upload(physicalName, source)` on a lazily created
-   `react-native-mega` session for the `EXPO_PUBLIC_MEGA_EMAIL`/`EXPO_PUBLIC_MEGA_PASSWORD` credentials. The SDK
-   encrypts and uploads 128 KB–1 MB chunks, commits the node, and verifies the
-   meta-MAC; the whole file is never buffered on native. A retry deletes the
-   previous physical-name node first.
-   The logical path is `/temp/uploads/{deviceId}/{fileName}`; because the host
-   can only address the MEGA account root, `src/utils/megaPathMapper.ts` (a port
-   of `StashHost.Shared/Services/MegaPathMapper.cs`) encodes it into a physical
-   root-level name such as `temp_uploads_{deviceId}_{name}_{hash8}{ext}`. The
-   host recomputes the same name, so the two mappings must stay byte-identical.
-   `existsAsync` uses `storage.find(physicalName)`; `downloadAsync` streams the
-   node into a local `ByteSink` with ranged GETs and MAC verification.
+3. **Batch** — files are grouped into byte-aware batches: at most
+   `UploadSettings.BatchSize` transfers and at most
+   `UploadSettings.MaxConcurrentBytes` declared bytes per batch. A single file
+   larger than the byte budget runs alone.
+4. **S3 upload** — `src/services/storage/s3StorageService.ts` derives the bucket
+   key from the logical path (`Storage.S3.Prefix` + the path without its leading
+   slash), presigns a `PUT` with
+   `src/services/storage/s3Signing.ts` (AWS SigV4, `UNSIGNED-PAYLOAD`,
+   host-only signing, pure-JS `js-sha256`), and sends the file:
+   - **Native:** SDK 58 `File.createUploadTask` with `PUT` +
+     `BINARY_CONTENT`, which streams the file on the native side and reports
+     progress and cancellation. Android `content://` (SAF) URIs are first
+     copied to the cache and the temporary copy is deleted afterwards.
+   - **Web:** the picked `Blob` is uploaded with `fetch`; the browser path
+     buffers the file in memory.
+   The logical path `/temp/uploads/{deviceId}/{contentHash}/{fileName}` is
+   persisted in SQLite (`storage_temp_path`) and is the value sent to Kafka.
+   Before presigning a `PUT`, the provider HEADs the key; when the object already
+   exists (same content hash) the transfer is skipped and the path is reused. No physical-name
+   mapping and no storage account login are involved.
+   `existsAsync`/`getFileSizeAsync` use presigned `HEAD`, `downloadAsync` uses a
+   presigned `GET`, and `deleteFileAsync` uses a presigned `DELETE`.
 5. **Publish** — with `Kafka.Proxy.Enabled`, an authenticated
    `POST {Kafka.Proxy.BaseUrl}/api/messages` to the Vercel proxy, which produces
-the record with the native Confluent client and adds the headers
+   the record with the native Confluent client and adds the headers
    `X-Message-Version`, `Authorization`, `X-Correlation-Id`, `X-Device-Id`,
    `X-User-Id`. Otherwise a Confluent REST Proxy **v3** produce call to
    `POST {RestUrl}v3/clusters/{clusterId}/topics/{topic}/records`.
 6. **Consume** — with the proxy enabled, a **polling loop**
    (`GET {Kafka.Proxy.BaseUrl}/api/messages?topic=…`) drains
-   `TopicUploadResponse`. Otherwise a **v2** consumer (`POST consumers/{groupId}`,
-   subscription, `GET .../records`) reads it. Either way records are matched by
-   `fileId`/`correlationId` and move rows to `Processing`, `Completed` or
+   `TopicUploadResponse`; the proxy filters the returned records to the verified
+   device/user and drops unidentified records before the app sees them.
+   Otherwise a **v2** consumer (`POST consumers/{groupId}`,
+   subscription, `GET .../records`) reads it without a server-side identity
+   filter. Either way records are matched by `fileId`/`correlationId` (and
+   response identity when present) and move rows to `Processing`, `Completed` or
    `Failed`. Exhausted retries are produced to `TopicDeadLetter`.
 
-Upload request payload (`camelCase` JSON, matching the shared .NET contract):
+Upload request payload (`camelCase` JSON, version 2):
 
 ```json
 {
@@ -474,18 +537,25 @@ Upload request payload (`camelCase` JSON, matching the shared .NET contract):
   "fileName": "IMG_0001.jpg",
   "fileSize": 1234567,
   "mimeType": "image/jpeg",
-  "megaTempPath": "/temp/uploads/<deviceId>/IMG_0001.jpg",
+  "storageTempPath": "/temp/uploads/<deviceId>/<contentHash>/IMG_0001.jpg",
+  "storageProvider": "S3",
   "metadata": { "createdAt": "...", "modifiedAt": "..." },
   "deviceId": "<32 hex>",
   "userId": "<identity user id>",
   "correlationId": "uuid",
-  "version": 1
+  "version": 2
 }
 ```
 
+`storageTempPath` is the logical path, not the bucket key. The consumer must
+apply the same `Storage.S3.Prefix` configuration when it reads the object.
+
 Upload response payload: `fileId`, `status` (`COMPLETED` | `FAILED`),
 `permanentPath`, `thumbnails`, `convertedFormat`, `deduplicated`,
-`processingTimeMs`, `error`, `correlationId`, `version`.
+`processingTimeMs`, `error`, `deviceId`, `userId`, `correlationId`, `version`.
+The response contract stays at version 1; the identity fields are additive.
+Through the Vercel proxy, polled responses are filtered to the authenticated
+device/user, and records without a usable `deviceId` are excluded.
 
 ---
 
@@ -514,13 +584,20 @@ Database file: `stash.db` (WAL mode).
 `files` — one row per discovered/selected file:
 `id`, `file_name`, `file_path`, `file_size`, `content_hash` (UNIQUE),
 `mime_type`, `created_at`, `modified_at`, `discovered_at`, `status`,
-`mega_temp_path`, `permanent_path`, `error_message`, `retry_count`,
+`storage_temp_path`, `permanent_path`, `error_message`, `retry_count`,
 `last_attempt_at`, `device_id`, `user_id`, `thumbnails`, `converted_format`,
 `is_deduplicated`. Indexed on `status` and `content_hash`.
 
 `folder_configs` — `id`, `folder_path`, `folder_name`, `is_enabled`,
 `added_at`, `last_scanned_at`, `include_patterns`, `exclude_patterns`,
 `include_subfolders`.
+
+`storage_temp_path` replaces the old `mega_temp_path` column. On first open the
+app runs an idempotent migration: it renames `mega_temp_path` when possible,
+otherwise it adds `storage_temp_path` and copies the old values into it, then
+drops the legacy column when SQLite supports it. Existing rows keep their temp
+paths, so in-flight files are not re-uploaded. The old column is retired when
+possible; on SQLite builds that cannot drop it, it remains unused.
 
 Stored keys: `stash.auth.access_token`, `stash.auth.refresh_token`,
 `stash.auth.expires_at`, `stash.auth.user_id`, `stash.auth.device_id`
@@ -530,7 +607,7 @@ Stored keys: `stash.auth.access_token`, `stash.auth.refresh_token`,
 
 ## 11. Backend contract summary
 
-If you need to stand up a backend, these are the endpoints the app calls:
+Identity requests go to the Identity API (Vercel or local .NET) at `{IdentityApiBaseUrl}`. If you need to stand up a backend, these are the endpoints the app calls:
 
 | Purpose | Request |
 | --- | --- |
@@ -541,16 +618,30 @@ If you need to stand up a backend, these are the endpoints the app calls:
 | Kafka produce | `POST {RestUrl}v3/clusters/{id}/topics/{topic}/records` |
 | Kafka consume | `POST {RestUrl}consumers/{group}` → `POST .../subscription` → `GET .../records` |
 
-MEGA is **not** part of this HTTP contract: the app logs into the account
-itself with `react-native-mega` and calls the MEGA API (`api.mega.co.nz`) from
-the device. No bridge/host endpoint is involved, so a backend only has to read
-the account with the same credentials and the same physical file names.
+S3 is **not** part of this HTTP contract: the app writes directly to the bucket
+with presigned URLs generated on the device. The host must therefore:
+
+- accept upload requests with `version: 2`;
+- read `storageTempPath` from S3, applying the configured `Storage.S3.Prefix`
+  and bucket/region/credentials;
+- treat `storageProvider: "S3"` as the staging provider (and reject or route
+  other providers explicitly);
+- delete the temporary object after processing if that is the desired
+  lifecycle.
 
 Auth responses must return a body with `accessToken` (or `access_token`) and
 `refreshToken` (or `refresh_token`); an optional expiry claim is read from the
 JWT `exp` when present. Error responses should carry a readable message
 (`error`, `message`, `detail` or plain text) — the app shows it verbatim in the
 error label or toast.
+
+**Known gap:** the .NET backend in this repository still uses
+`MegaStorageProvider` (`Storage:Provider=Mega`), expects `megaTempPath`, and its
+`UploadRequestValidator` only accepts `version == 1`. It will reject the new
+client's version-2 messages and cannot read the S3 object. The full-stack flow
+therefore does not work end-to-end until the host gains S3 support and a version
+2 contract. This is a documented follow-up, not something the client can work
+around.
 
 ---
 
@@ -560,15 +651,22 @@ error label or toast.
 | --- | --- | --- |
 | Signing in shows *“Identity API base URL is not configured.”* | `IdentityApiBaseUrl` is empty | Set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` in `.env` and restart the dev server. |
 | Signing in fails with a network/timeout error | Host unreachable, wrong scheme/port, or a device that cannot see `localhost` of your machine | Use a LAN IP or HTTPS tunnel URL instead of `localhost`, check `IdentityApiTimeoutSeconds`. |
+| Vercel Identity API returns 500 | Required environment variables are missing on the Vercel project | Set `MONGODB_URI`, `MONGODB_DATABASE`, `JWT_SIGNING_KEY`, `JWT_ISSUER` and `JWT_AUDIENCE`, then redeploy. |
+| 401 `invalid_token` from the proxy/host after deploying the Identity API | `JWT_SIGNING_KEY`, issuer or audience differs between the Vercel project, the Kafka proxy and any host validating tokens | Keep `JWT_SIGNING_KEY`, `JWT_ISSUER` (`stash-auth`) and `JWT_AUDIENCE` (`stash-app`) identical across all token consumers. |
+| Browser CORS error on `/api/auth/*` | The Expo/web origin is not in `CORS_ALLOWED_ORIGINS` on the Vercel project | Set `CORS_ALLOWED_ORIGINS` on the Vercel project to the app origin(s), comma-separated; the default is `*`. |
 | Config edits have no effect | `appconfig.json` and `.env` are bundled at build time | Stop and restart `npx expo start` (clear cache with `npx expo start -c` if needed). |
 | Web build/bundle errors about `wa-sqlite` or `SharedArrayBuffer` | `metro.config.js` missing or headers not served | Keep `metro.config.js` as shipped; serve web over HTTP(S) with COOP/COEP if you host `dist/`. |
-| Upload says *“MEGA account is not configured…”* | `Storage.Mega.Email` or `Storage.Mega.Password` is empty | Set `EXPO_PUBLIC_MEGA_EMAIL` and `EXPO_PUBLIC_MEGA_PASSWORD` in `.env` and restart the dev server. |
-| Upload says *“MEGA login failed: Object not found (wrong password?)”* | MEGA rejected the credentials | Check `EXPO_PUBLIC_MEGA_EMAIL` / `EXPO_PUBLIC_MEGA_PASSWORD` in `.env`. |
-| Upload says *“MEGA login requires a two-factor code…”* | The account has 2FA enabled | Put the current TOTP in `EXPO_PUBLIC_MEGA_SECOND_FACTOR_CODE` in `.env` and restart the dev server. |
-| Upload hangs on the first file for a while | MEGA's PBKDF2 login key (100 000 iterations) is derived in pure JS by the SDK | Expected on low-end phones; the session is reused for later uploads. |
+| Upload says *“Amazon S3 is not configured…”* | Bucket, region, access key or secret is empty | Set `EXPO_PUBLIC_S3_BUCKET`, `EXPO_PUBLIC_S3_REGION`, `EXPO_PUBLIC_S3_ACCESS_KEY_ID` and `EXPO_PUBLIC_S3_SECRET_ACCESS_KEY` and restart. |
+| Upload fails with `403 SignatureDoesNotMatch` | Wrong secret, wrong region, or the device clock is skewed from AWS | Re-check the secret and region; enable automatic device time and retry. SigV4 rejects large clock skew. |
+| Upload fails with `403 AccessDenied` / `InvalidAccessKeyId` | Key disabled, wrong account, or the bucket policy/IAM role denies the operation | Grant the key `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and `s3:HeadObject` on the bucket/prefix; verify the key id. |
+| Upload fails with `403 Request has expired` / token errors | The presigned URL or the STS session token expired | Raise `PresignExpirySeconds` within the credential lifetime, or refresh the temporary credentials; presigns are clamped to 604800 s. |
+| Upload fails with `404 NoSuchBucket` / `NoSuchKey` | Bucket name, key, prefix or region is wrong | Verify the bucket exists in that region and that the expected key is `Prefix/temp/uploads/...`; check `Storage.S3.Prefix` on both client and host. |
+| S3 request redirects, or DNS/TLS errors | Wrong region or endpoint | Set the bucket's real region. For AWS leave `Endpoint` empty; for MinIO/R2 set the correct `Endpoint` (and path style if required). |
+| Web upload says *“Failed to fetch”* / CORS preflight fails | The bucket has no CORS rule for the Expo origin | Add a bucket CORS rule allowing `PUT`, `GET`, `HEAD` (and the request headers the browser sends) from `http://localhost:8081` or your deployed origin. |
+| S3 transfer fails immediately on Android with a `content://` URI | The SAF provider cannot be streamed directly | Expected fallback: the app stages a cache copy before uploading; check free cache space and storage permission. |
 | Kafka produce fails with *no cluster_id* | Proxy did not return a cluster id | Set `EXPO_PUBLIC_KAFKA_CLUSTER_ID` explicitly (e.g. `confluent-local`). |
-| Files never reach `Completed` | No consumer running, wrong `TopicUploadResponse`, or the host never replies | Confirm the topic names and that the Kafka REST proxy consumer endpoints are enabled. |
-| Folder scan finds nothing | Folder disabled, path not readable, or files outside the 14 patterns | Enable the folder; verify the path and extension; remember scans are meaningful mainly on native platforms. |
+| Files never reach `Completed` | No consumer running, wrong `TopicUploadResponse`, the host never replies, or the host rejects version 2 | Confirm the topic names and consumer endpoints. With the repository backend, expect v2 requests to be rejected until S3/version-2 support is added. |
+| Folder scan finds nothing | Folder disabled, stale iOS grant, unreadable URI, or files outside the 14 patterns | Enable the folder; re-select it with Choose Folder (especially after an iOS restart); verify the extension; folder scanning is native-only. |
 | Theme does not follow the OS | A fixed mode is selected | Settings → Appearance → **System**. |
 | Buttons seem unresponsive in a browser automation tool | Some DOM click automation (single synthetic `click`) does not satisfy React Native Web's responder system | Use real pointer input or `element.click()`; the app's handlers themselves are fine. |
 | `npx tsc --noEmit` fails after a dependency update | Type mismatches from a new SDK | Align versions with `npx expo install --fix` and re-run the check. |
@@ -584,23 +682,29 @@ error label or toast.
 - **React Navigation, not Expo Router.** The plan specifies an auth-gated
   native-stack with a bottom-tab shell, which is implemented with
   `@react-navigation/native-stack` + `@react-navigation/bottom-tabs`.
-- **No live backend bundled.** Identity and Kafka endpoints (and, in a fresh
-  checkout, the MEGA credentials) are placeholders; the corresponding actions
-  fail with explicit messages until configured.
-- **MEGA transfers stream on native, buffer on web.** `react-native-mega`
-  reads/writes 128 KB–1 MB chunks through expo-file-system handles, so the
-  500 MB limit is no longer a memory limit. Web has no expo-file-system
-  implementation, so the browser path reads the picked Blob into memory; keep
-  the limit moderate for web-only use. If a provider cannot be opened as a
-  file handle, the adapter logs a fallback and reads the file into memory.
-- **MEGA login cryptography is pure JS inside the SDK.** The first login derives
-  PBKDF2-SHA-512 (100 000 iterations) on the JS thread and can take a moment on
-  older phones; hashcash proof-of-work uses native `expo-crypto` SHA-256. There
-  is no WebCrypto shim to maintain.
-- **MEGA credentials are read from `EXPO_PUBLIC_*` variables (`.env`) and used
-  on the device** by `react-native-mega`; they are inlined into the app bundle.
-  That is fine for a personal/dev build, but ship a restricted account (or move
-  the upload back to a server) before distributing the app.
+- **No live backend bundled.** Identity, Kafka and S3 endpoints/credentials are
+  placeholders; the corresponding actions fail with explicit messages until
+  configured.
+- **S3 credentials are inlined in the app bundle.** They come from
+  `EXPO_PUBLIC_*` variables and are readable by anyone with the bundle. Use a
+  tightly scoped key/role and rotate it; this is acceptable for personal/dev
+  builds, not for wide distribution without a credential broker.
+- **Presigned URLs are bearer credentials with a limited lifetime.** The default
+  is 3600 seconds (clamped to 1–604800). A URL that leaks before it expires can
+  be used until expiry; keep lifetimes short.
+- **Single PUT only.** S3 limits one presigned PUT to 5 GB. Multipart/resumable
+  upload and bucket lifecycle configuration are deferred; the app's 500 MB cap
+  keeps single-PUT uploads comfortably below that.
+- **Native streams, web buffers.** Native uploads use SDK 58
+  `File.createUploadTask` and downloads use `downloadAsync`, so whole files are
+  not held in JS.
+  The web path reads the picked `Blob` into memory and downloads are handed to
+  the browser as an object URL; keep the limit moderate for web-only use.
+- **Web needs bucket CORS.** Browser PUT/GET calls are cross-origin; without a
+  bucket CORS rule the transfer fails even though native builds work.
+- **Host follow-up required.** The repository backend still uses MEGA and
+  version 1. It does not read S3 and rejects `version: 2`, so live end-to-end
+  processing is not available from this client until the host changes.
 - **Thumbnails/conversion** are displayed and stored from the host response;
   the app does not generate thumbnails locally.
 - **Web is a development target.** SQLite works via the wasm worker, and secure
@@ -610,18 +714,19 @@ error label or toast.
 
 ## 14. Verification checklist
 
-Already verified for this project:
+Run from the app directory:
 
 ```bash
-cd ../react-native-mega && npm run build   # the linked SDK is consumed from dist/
-cd ../react_native_stash
-npx tsc --noEmit                  # exit 0, no type errors
-npx expo export --platform web    # exit 0, bundles wa-sqlite.wasm + react-native-mega
-npx expo export --platform android # exit 0, bundles react-native-mega for Hermes
-npx expo start --web --port 8081  # dev server on http://localhost:8081
+cd react_native_stash
+npm install
+npm run typecheck                  # exit 0, no type errors (package script)
+npx tsc --noEmit                   # exit 0, no type errors
+npx expo export --platform web     # static web bundle (no SDK build step)
+npx expo export --platform android # JS bundle for Android
+npx expo start --web --port 8081   # dev server on http://localhost:8081
 ```
 
-Manual checks performed in the browser preview:
+Manual checks in the browser preview:
 
 - Login renders with the Stash headline, OpenSans typography and a
   pre-generated 32-hex device ID.
@@ -630,9 +735,20 @@ Manual checks performed in the browser preview:
   shows *“Identity API base URL is not configured.”* with the placeholder
   config, i.e. the full press → handler → error-label flow works.
 
-To verify against a real backend: set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` in `.env`, restart, register a
-user, confirm the shell appears, sign out and sign back in, then configure the
-MEGA account + Kafka and follow §8.
+For a deployed Identity API, check liveness:
+
+```bash
+curl -s https://<vercel-project>.vercel.app/api/auth/health
+# {"status":"healthy","timestamp":"…"}
+```
+
+To verify against a real backend: set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` and
+the S3 variables in `.env`, restart, register a user, confirm the shell appears,
+sign out and sign back in, then upload a file and confirm the object appears at
+`Prefix/temp/uploads/{deviceId}/{contentHash}/{fileName}`. Check that the published record is
+version 2 with `storageTempPath` and `storageProvider: "S3"`. A host that
+accepts version 2 and reads S3 is required for `Completed`; the repository
+backend does not yet do so. No live S3 run is claimed by this guide.
 
 ---
 
@@ -640,6 +756,7 @@ MEGA account + Kafka and follow §8.
 
 | Task | File |
 | --- | --- |
+| Architecture, data flow and diagrams | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Colours / palette | `src/theme/colors.ts` |
 | Fonts, sizes, form metrics | `src/theme/typography.ts` |
 | Theme resolution (system/light/dark) | `src/theme/ThemeContext.tsx` |
@@ -647,13 +764,14 @@ MEGA account + Kafka and follow §8.
 | Session state, startup restore | `src/auth/AuthContext.tsx` |
 | Media patterns / MIME map | `src/models/mediaPatterns.ts` |
 | Status labels, colours, icons | `src/models/uploadStatus.ts` |
-| SQLite schema | `src/data/database.ts` |
+| SQLite schema and `storage_temp_path` migration | `src/data/database.ts` |
 | Kafka message contracts | `src/models/messages.ts` |
 | Kafka REST calls | `src/services/kafkaRestTransport.ts` |
-| MEGA client (react-native-mega) | `src/services/megaHttpService.ts` |
-| MEGA login/adapters (RNG, SHA-256, fetch, 2FA) | `src/services/megaClient.ts` |
-| Streaming file source/sink for MEGA transfers | `src/services/megaFileAdapters.ts` |
-| Logical → MEGA file name mapping | `src/utils/megaPathMapper.ts` |
+| Storage provider contract | `src/services/storage/storageProvider.ts` |
+| Storage provider factory | `src/services/storage/storageProviderFactory.ts` |
+| S3 upload/exists/download/delete | `src/services/storage/s3StorageService.ts` |
+| Pure-JS AWS SigV4 presigner | `src/services/storage/s3Signing.ts` |
+| Native streaming / web Blob transfers | `src/services/storage/s3Transfer.ts` |
 | Batching / retry / publish orchestration | `src/services/uploadManager.ts`, `src/services/uploadActions.ts` |
 | Background pass and timer | `src/services/backgroundUploadService.ts`, `src/services/backgroundUploadScheduler.ts` |
 | Service wiring | `src/services/singletons.ts` |

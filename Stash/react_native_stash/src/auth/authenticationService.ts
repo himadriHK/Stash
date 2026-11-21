@@ -21,6 +21,8 @@ export const DEVICE_ID_KEY = 'stash.auth.device_id';
 
 const EXPIRY_MARGIN_MS = 60_000;
 
+let refreshInFlight: Promise<boolean> | null = null;
+
 function requestTimeoutMs(): number {
   const seconds = appConfig.IdentityApiTimeoutSeconds;
   return (seconds > 0 ? seconds : 30) * 1000;
@@ -184,7 +186,7 @@ export async function ensureValidAccessTokenAsync(): Promise<boolean> {
   return refreshTokenAsync();
 }
 
-export async function refreshTokenAsync(): Promise<boolean> {
+async function performRefreshTokenAsync(): Promise<boolean> {
   const refreshToken = await getRefreshTokenAsync();
   if (!refreshToken) {
     return false;
@@ -207,14 +209,13 @@ export async function refreshTokenAsync(): Promise<boolean> {
       requestTimeoutMs(),
     );
   } catch {
-    // A transport failure must not wipe a possibly valid session.
     return false;
   }
 
   if (!response.ok) {
-    // An invalid/expired refresh token cannot be retried: clear the session so
-    // the UI returns to login instead of repeatedly sending a dead token.
-    await clearSessionAsync();
+    if (response.status === 400 || response.status === 401 || response.status === 403) {
+      await clearSessionAsync();
+    }
     return false;
   }
 
@@ -235,6 +236,20 @@ export async function refreshTokenAsync(): Promise<boolean> {
 
   await persistTokenAsync(token);
   return true;
+}
+
+export function refreshTokenAsync(): Promise<boolean> {
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+  let promise: Promise<boolean>;
+  promise = performRefreshTokenAsync().finally(() => {
+    if (refreshInFlight === promise) {
+      refreshInFlight = null;
+    }
+  });
+  refreshInFlight = promise;
+  return promise;
 }
 
 export async function logoutAsync(): Promise<void> {

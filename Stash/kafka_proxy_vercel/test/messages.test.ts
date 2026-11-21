@@ -103,7 +103,7 @@ test('polls with the device-derived group and clamped limits', async () => {
     {
       topic: 'stash.upload.response',
       key: 'abc',
-      value: '{"fileId":"abc","status":"COMPLETED"}',
+      value: '{"fileId":"abc","status":"COMPLETED","deviceId":"device-1","userId":"user-1"}',
       headers: {},
       partition: 0,
       offset: 9,
@@ -125,6 +125,44 @@ test('polls with the device-derived group and clamped limits', async () => {
   assert.equal(poll.topic, 'stash.upload.response');
   assert.equal(poll.timeoutMs, 8000);
   assert.equal(poll.maxRecords, 200);
+});
+
+test('filters polled records to the authenticated device', async () => {
+  const gateway = new FakeGateway();
+  gateway.records = [
+    {
+      topic: 'stash.upload.response',
+      key: 'mine',
+      value: '{"fileId":"mine","status":"COMPLETED","deviceId":"device-1","userId":"user-1"}',
+      headers: {},
+      partition: 0,
+      offset: 10,
+    },
+    {
+      topic: 'stash.upload.response',
+      key: 'foreign',
+      value: '{"fileId":"foreign","status":"COMPLETED","deviceId":"device-2","userId":"user-1"}',
+      headers: {},
+      partition: 0,
+      offset: 11,
+    },
+    {
+      topic: 'stash.upload.response',
+      key: 'legacy',
+      value: '{"fileId":"legacy","status":"COMPLETED"}',
+      headers: {},
+      partition: 0,
+      offset: 12,
+    },
+  ];
+
+  const response = await handlerWith(gateway).fetch(
+    pollRequest('?topic=stash.upload.response'),
+  );
+
+  assert.equal(response.status, 200);
+  const body = await readJson<{ records: KafkaRecord[] }>(response);
+  assert.deepEqual(body.records.map((record) => record.key), ['mine']);
 });
 
 test('refuses to consume a topic outside the consume allowlist', async () => {

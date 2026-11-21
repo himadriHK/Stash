@@ -21,11 +21,17 @@
     }
   },
   "Storage": {
-    "Provider": "Mega",
-    "Mega": {
-      "Email": "",
-      "Password": "",
-      "SecondFactorCode": ""
+    "Provider": "S3",
+    "S3": {
+      "Bucket": "",
+      "Region": "us-east-1",
+      "AccessKeyId": "",
+      "SecretAccessKey": "",
+      "SessionToken": "",
+      "Endpoint": "",
+      "ForcePathStyle": false,
+      "Prefix": "",
+      "PresignExpirySeconds": 3600
     }
   },
   "Auth": {
@@ -39,7 +45,9 @@
   "UploadSettings": {
     "BatchSize": 10,
     "MaxRetries": 3,
-    "MaxFileSizeBytes": 524288000
+    "MaxHostRetries": 3,
+    "MaxFileSizeBytes": 524288000,
+    "MaxConcurrentBytes": 268435456
   },
   "BackgroundUpload": {
     "Enabled": true,

@@ -1,17 +1,36 @@
 # Stash — Local Full-Stack Setup & Run Guide (React Native UI)
 
-This runbook takes a clean Windows machine to a **working end-to-end Stash system**:
+> **Compatibility warning — the React Native client now uses S3.**
+> The RN app uploads temporarily to **S3** (presigned SigV4 `PUT` generated on
+> the device) and publishes upload requests as **message version 2** with
+> `storageTempPath` and `storageProvider: "S3"`.
+> The host steps in this runbook still describe the repository's **MEGA** staging
+> provider (`Storage:Provider=Mega`) and a **version-1 validator** that expects
+> `megaTempPath`. As written, the host rejects the new client's messages and
+> cannot read the S3 object.
+> To run the flow end-to-end, the host must implement/configure S3 and accept
+> version 2. See
+> [react_native_stash/docs/SETUP_AND_USAGE.md §4.4](../react_native_stash/docs/SETUP_AND_USAGE.md#44-storage-s3)
+> and [§11](../react_native_stash/docs/SETUP_AND_USAGE.md#11-backend-contract-summary).
+> For the client-side architecture and data flow, see
+> [react_native_stash/docs/ARCHITECTURE.md](../react_native_stash/docs/ARCHITECTURE.md).
+> The backend/MEGA setup sections remain accurate for the repository's current
+> host path; client-specific sections are updated to S3.
+
+This runbook takes a clean Windows machine to a **locally running Stash backend and RN client**:
 
 - the **React Native (Expo) UI** in `react_native_stash/` as the only client,
-- the **Identity API** (`StashHost.IdentityApi`) running locally,
+- the **Identity API** (`StashHost.IdentityApi` locally, or the Vercel function in `kafka_proxy_vercel/`),
 - the **host backend** (`StashHost.Functions`, Durable Functions + Kafka trigger) running locally,
 - **MongoDB**, **Azurite** and a **Kafka REST proxy** running locally,
-- and exactly **two external services**: **MEGA** (file storage) and **Aiven for Apache Kafka** (broker).
+- and external services: **S3** (client upload staging), **MEGA** (the
+  repository backend's staging provider) and **Aiven for Apache Kafka** (broker).
 
 Everything else — database, orchestration storage, broker gateway — is a local process or
 container. No Azure subscription, Application Insights, Key Vault, Confluent Cloud or hosted API is
-required. The RN client writes to MEGA **directly** with the `megajs` library, so no upload bridge
-process is part of the stack.
+required. The RN client writes to S3 directly with presigned URLs, so no upload bridge process is
+part of the client path. The repository backend still stages to MEGA; that is the legacy side of
+the mismatch described above.
 
 > **Why a local Kafka REST proxy?**
 > The React Native client produces with record headers through the **Confluent REST Proxy v3** API
@@ -20,12 +39,12 @@ process is part of the stack.
 > container locally against your Aiven cluster gives the app a v3 endpoint while the records still
 > land in your Aiven topics.
 >
-> **MEGA needs no bridge.** `react_native_stash/src/services/megaHttpService.ts` logs into the
-> configured MEGA account with `megajs` (https://mega.js.org/) and uploads the temporary file to the
-> account root, using a TypeScript port of `MegaPathMapper`
-> (`react_native_stash/src/utils/megaPathMapper.ts`) so the Functions backend finds the same physical
-> name. The old `POST /api/mega/upload` bridge is only needed by pre-megajs app builds; §10 keeps a
-> reference implementation for those, and it is no longer required for this guide.
+> **S3 needs no upload bridge.** The RN app presigns a `PUT` with
+> `react_native_stash/src/services/storage/s3Signing.ts` and streams the file to the
+> configured bucket with `s3Transfer.ts`; no host upload endpoint is involved.
+> The backend must still be taught to read that bucket and accept version 2
+> before its processing loop can consume the new client's messages. The MEGA
+> bridge mentioned later is legacy and is not part of the current client path.
 
 ---
 
@@ -34,15 +53,16 @@ process is part of the stack.
 | # | Component | How it runs | Address | Needed for |
 |---|-----------|-------------|---------|------------|
 | 1 | MongoDB | Docker (`mongo:7`) | `mongodb://localhost:27017` | Identity API users/devices/refresh tokens |
-| 2 | Identity API | `dotnet run` | `http://localhost:5102` | Register / login / refresh / revoke |
+| 2 | Identity API (local .NET or Vercel function) | `dotnet run` or Vercel deployment | `http://localhost:5102` (local) or `https://<vercel-project>.vercel.app` | Register / login / refresh / revoke |
 | 3 | Azurite (Azure Storage emulator) | Docker | `127.0.0.1:10000-10002` | Durable Functions state, `AzureWebJobsStorage` |
 | 4 | StashHost.Functions | `dotnet run` (Core Tools host) | `http://localhost:7071` | Kafka trigger + Durable orchestration + `/api/health` |
 | 5 | Kafka REST proxy (Confluent) | Docker | `http://localhost:8082` | RN produce (v3) and consume (v2) |
-| 6 | Mega REST bridge (legacy, optional) | `node` | `http://localhost:8090` | Only for app builds that still call `/api/mega/*`; the current app talks to MEGA via `megajs` |
+| 6 | Mega REST bridge (legacy, optional) | `node` | `http://localhost:8090` | Only for old MEGA-era app builds; the current S3 client never calls it |
 | 7 | React Native UI | Expo / Metro | `http://localhost:8081` | The client under test |
-| 8 | **MEGA** (external) | SaaS | `mega.nz` | Staging of uploads (`/temp/...`) and thumbnail storage |
-| 9 | **Aiven Kafka** (external) | SaaS | `<host>:<port>` (SASL_SSL) | `stash.upload.request`, `stash.upload.response`, `stash.dlq` |
-| 10 | **Local media library** | Host filesystem (`Storage:Local:RootPath`) | e.g. `D:\StashLibrary`, `\\nas\photos\stash` | Permanent copy of every processed upload (images/JPEG, videos/MP4) |
+| 8 | **Amazon S3 / S3-compatible** (external) | SaaS or self-hosted | bucket endpoint | Client upload staging (new RN client) |
+| 9 | **MEGA** (external, backend) | SaaS | `mega.nz` | The repository backend's staging (`/temp/...`) and thumbnails; legacy relative to the new client |
+| 10 | **Aiven Kafka** (external) | SaaS | `<host>:<port>` (SASL_SSL) | `stash.upload.request`, `stash.upload.response`, `stash.dlq` |
+| 11 | **Local media library** | Host filesystem (`Storage:Local:RootPath`) | e.g. `D:\StashLibrary`, `\\nas\photos\stash` | Permanent copy of every processed upload (images/JPEG, videos/MP4) |
 
 ### 1.1 Data flow (what actually happens on an upload)
 
@@ -50,15 +70,17 @@ process is part of the stack.
 ┌────────────────────────────┐
 │ React Native UI (8081)     │
 │  • scan folder → SHA-256   │
-│  • megajs upload           │──────────────► MEGA account (megajs, direct)
-│  • produce v3 record       │                root-level file "temp_uploads_…"
+│  • presigned PUT to S3     │──────────────► S3 bucket
+│  • produce v2 record       │                key: [Prefix/]temp/uploads/…
 │    to stash.upload.request │
 └─────────┬──────────────────┘
           │ v3 produce (HTTP)
           ▼
    Kafka REST proxy (8082) ──► Aiven Kafka ──► StashHost.Functions (7071)
-                                                 │ Kafka trigger validates JWT headers,
-                                                 │ key == SHA-256 fileId, shapes record
+                                                 │ Repository host today:
+                                                 │ validator accepts version 1
+                                                 │ and megaTempPath only, so it
+                                                 │ rejects the v2 request (DLQ).
                                                  ▼
                                         Durable orchestration
                                  Download → Hash → Dedup → Convert →
@@ -70,25 +92,34 @@ process is part of the stack.
                                    (RN sets the local file status)
 ```
 
-Storage layout produced by the backend (`StashHost.Functions/Activities/StoragePathBuilder.cs`):
+The diagram shows the intended flow. With the repository host as checked in, the
+version-1 validator rejects the new client's v2 request before the orchestration
+starts, so the processing and response steps cannot run until S3 and version-2
+support are added on the host.
+
+Storage layout produced by the backend (`StashHost.Functions/Activities/StoragePathBuilder.cs`). The
+first row is the new S3 client staging path; the MEGA rows are the repository backend's
+current/legacy layout:
 
 | Purpose | Logical path | Physical location |
 |---|---|---|
-| Temp upload (client → host) | `/temp/uploads/{deviceId}/{fileName}` | MEGA: `temp_uploads_{deviceId}_{name}_{hash8}{ext}` |
+| Temp upload (new S3 client) | `/temp/uploads/{deviceId}/{fileName}` | **S3**: `[Storage.S3.Prefix/]temp/uploads/{deviceId}/{fileName}` |
+| Temp upload (repository backend, legacy) | `/temp/uploads/{deviceId}/{fileName}` | MEGA: `temp_uploads_{deviceId}_{name}_{hash8}{ext}` |
 | Permanent copy | `/backups/{userId}/{sha256}.{ext}` (`jpg` after image conversion, `mp4` after video conversion) | **Local library disk**: `{Storage:Local:RootPath}\backups\{userId}\{sha256}.{ext}` |
 | Thumbnails | `/thumbs/{userId}/{128\|256\|512}/{sha256}.jpg` | MEGA: `thumbs_{userId}_{size}_{sha256}_{hash8}.jpg` |
 
 The permanent copy never goes to MEGA: `StorePermanentActivity` always asks the storage factory for the
 `Local` provider (`StashHost.Shared/Services/LocalStorageProvider.cs`), whatever `Storage:Provider` says.
-MEGA is only the staging area for the upload in flight (deleted after processing) plus the thumbnail store.
+MEGA is only the backend's staging area for the upload in flight (deleted after processing) plus the
+thumbnail store. With the new client the temp object is in S3, so the host also needs S3 delete support.
 
-The **physical name** used for MEGA objects (temp uploads and thumbnails) is produced by
-`StashHost.Shared/Services/MegaPathMapper.cs`: every path
+The **physical name** rule for MEGA objects (temp uploads and thumbnails) is produced by the backend's
+MEGA writer, `StashHost.Shared/Services/MegaPathMapper.cs`: every path
 segment except the last is sanitised (`[A-Za-z0-9._-]`, everything else → `_`), joined with `_`,
 truncated to 180 chars, then suffixed with `_<first 8 hex of SHA-256 of the normalised path>` before
-the extension. **Every writer must use the identical rule** or the backend will download a file that
-does not exist: the RN app ports it to `react_native_stash/src/utils/megaPathMapper.ts`, and the
-legacy bridge in Appendix A mirrors it as well.
+the extension. The RN app no longer ports this mapping: it stores and sends the logical
+`storageTempPath` and leaves bucket-key mapping to the host. The legacy bridge in Appendix A mirrors
+the MEGA rule for old builds only.
 
 ---
 
@@ -110,7 +141,12 @@ Accounts you must own:
 
 - **Aiven for Apache Kafka** service (free/starter tier is enough): bootstrap host `host:port`,
   a service user with SCRAM-SHA-256 credentials, and ACLs allowing produce/consume on the three topics.
+- **S3 bucket** (AWS or an S3-compatible provider) with credentials that can
+  `PutObject`, `GetObject`, `HeadObject` and `DeleteObject` on the client prefix.
+  The new RN app writes here; this is not used by the repository backend yet.
 - **MEGA** account with enough space for your test files, and its email/password.
+  This is for the repository backend's current staging provider (legacy relative
+  to the S3 client), not for the new RN upload path.
 
 ### 2.1 Installing Azure Functions Core Tools on Windows
 
@@ -201,7 +237,11 @@ Git Bash rewrites `/opt/...` inside `docker exec` into `C:/…`. Prefix containe
 8. **Do not** enable Karapace's REST proxy expecting v3 — it is v2-only. We run the Confluent REST
    Proxy locally instead (§9).
 
-### 3.2 MEGA
+### 3.2 MEGA (backend staging; legacy relative to the S3 client)
+
+> The new RN client uploads to S3, not MEGA. This section configures the
+> repository backend's MEGA provider, which is still used for the backend's
+> current version-1 flow, temp staging and thumbnails.
 
 1. Create a MEGA account (`https://mega.nz/register`).
 2. Use an **empty account** for development: the backend stages uploads and writes thumbnails into
@@ -219,22 +259,26 @@ Stash/
 ├── StashHost.IdentityApi/      # ASP.NET Core minimal API  (auth)
 ├── StashHost.Functions/        # .NET 10 isolated Azure Functions host (Kafka + Durable)
 ├── StashHost.Shared/           # messages, storage provider, path mapper
-├── MegaConnectivity.Core/      # megajs via node-api-dotnet (libnode embedded)
+├── MegaConnectivity.Core/      # backend MEGA via megajs/node-api-dotnet (legacy relative to the S3 client)
 ├── Stash.Maui/, Stash.Maui.Data/, Flutter*, ...  # not used by this runbook
 ├── react_native_stash/         # the UI
-│   ├── src/config/appconfig.json       # ← you edit this
+│   ├── src/config/appconfig.json       # defaults (Storage.Provider = S3)
+│   ├── src/services/storage/           # S3 provider, SigV4 presigner, transfers
+│   ├── .env                            # secrets/endpoints (create from .env.example)
 │   └── docs/SETUP_AND_USAGE.md         # client-only guide
 └── docs/LOCAL_FULL_STACK_SETUP.md      # this file
 ```
 
 Shared configuration values that **must match in every component**:
 
-| Value | Identity API | Functions | RN app | Effect if it differs |
+| Value | Identity API (local .NET / Vercel) | Functions | RN app | Effect if it differs |
 |---|---|---|---|---|
-| JWT signing key | `Auth:Jwt:SigningKey` | `Auth:Jwt:SigningKey` | — | Kafka trigger rejects every message → DLQ |
-| Issuer / audience | `stash-auth` / `stash-app` | same | `Auth.Jwt.*` (informational) | JWT validation fails |
+| JWT signing key | `Auth:Jwt:SigningKey` / `JWT_SIGNING_KEY` | `Auth:Jwt:SigningKey` | — | Kafka trigger rejects every message → DLQ |
+| Issuer / audience | `stash-auth` / `stash-app` (local: `Auth:Jwt:Issuer`/`Audience`; Vercel: `JWT_ISSUER`/`JWT_AUDIENCE`) | same | `Auth.Jwt.*` (informational) | JWT validation fails |
 | Topic names | — | `KafkaTrigger("stash.upload.request")`, DLQ handler `stash.dlq`, producer `stash.upload.*` | `Kafka.Topic*` | Messages land where nobody listens |
-| Mega physical naming | — | `MegaPathMapper` | `src/utils/megaPathMapper.ts` | Download activity gets 404 |
+| Message version | — | validator accepts `1` today | client publishes `2` | v2 requests are rejected until host support lands |
+| S3 bucket/region/prefix | — | needs S3 support for v2 (not implemented) | `Storage.S3.*` | Host cannot read the client's temp object |
+| Mega physical naming (legacy) | — | `MegaPathMapper` | — (RN client no longer maps names) | Only affects old MEGA-era clients/bridge builds |
 
 ---
 
@@ -257,6 +301,8 @@ docker exec stash-mongo mongosh stash --eval 'db.dropDatabase()'
 ---
 
 ## 6. Step 2 — Identity API
+
+### Option A — Local .NET Identity API
 
 ```bash
 cd StashHost.IdentityApi
@@ -319,6 +365,19 @@ The decoded access token carries exactly the claims the Kafka trigger requires:
 | `POST /api/auth/revoke` | `{deviceId}` + `Authorization: Bearer …` | revokes device + its refresh tokens |
 | `GET /health` | — | liveness |
 
+### Option B — Vercel Identity API
+
+The deployed Identity API is the Vercel function in `kafka_proxy_vercel/` (`api/auth/[...path].ts`), served from the same origin as the Kafka proxy. The local .NET API above remains a local/reference option, and `StashHost.Functions` is not changed.
+
+1. Deploy `kafka_proxy_vercel` and set `MONGODB_URI` and `MONGODB_DATABASE` for the users, devices and refresh-token store.
+2. Set `JWT_SIGNING_KEY`, `JWT_ISSUER` (`stash-auth`) and `JWT_AUDIENCE` (`stash-app`). Keep them identical to the Kafka proxy and any host that still validates tokens.
+3. Set `CORS_ALLOWED_ORIGINS` for the Expo/web origin instead of leaving the default `*`.
+4. Point the app at the deployment origin: `EXPO_PUBLIC_IDENTITY_API_BASE_URL=https://<vercel-project>.vercel.app` (no trailing slash required).
+
+Routes: `POST /api/auth/register|login|refresh|revoke`, plus `GET /api/auth/health` as the liveness check.
+
+Deployment and environment details: [kafka_proxy_vercel/README.md](../kafka_proxy_vercel/README.md); contract plan: [kafka_proxy_vercel/docs/IDENTITY_API_PLAN.md](../kafka_proxy_vercel/docs/IDENTITY_API_PLAN.md).
+
 ---
 
 ## 7. Step 3 — Azurite (Durable Functions storage)
@@ -350,7 +409,7 @@ Edit `StashHost.Functions/local.settings.json` (`Values` section). Everything is
 | `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated` | leave as is |
 | `Kafka:BootstrapServers` | your Aiven `host:port` | trigger + producer |
 | `Kafka:Username` / `Kafka:Password` | Aiven service user / SCRAM password | SASL_SSL + SCRAM-SHA-256 is hard-coded in the trigger |
-| `Storage:Provider` | `Mega` | staging provider for temp uploads + thumbnails |
+| `Storage:Provider` | `Mega` | **Backend/legacy:** staging provider for temp uploads + thumbnails. The new RN client uploads to S3, so the host needs S3 support for that path. |
 | `Storage:Mega:Email` / `Password` | your MEGA account | in-process megajs login |
 | `Storage:Local:RootPath` | library directory, e.g. `%USERPROFILE%\StashLibrary` | where permanent copies are written (any writable local/network path) |
 | `Auth:Jwt:SigningKey` | **same string as the Identity API** | the default value already matches; change both together |
@@ -363,6 +422,9 @@ Edit `StashHost.Functions/local.settings.json` (`Values` section). Everything is
 The checked-in values point at `kafka.dev.aivencloud.com:21753` with an empty password; until you
 replace them the host logs `Failed to resolve 'kafka.dev.aivencloud.com'` and every trigger stays
 offline — that is expected, not a code fault.
+
+These settings configure the **repository backend's MEGA path**. They do not configure the RN
+client; the new client's S3/version-2 contract is in §11.
 
 ### 8.2 Choose the local media library location
 
@@ -403,9 +465,14 @@ Notes:
   share to the host's identity. If the share is offline, the activity fails with
   `Store permanent file failed: …` and the orchestration reports `FAILED` — nothing is stored
   anywhere else.
-- Two different disks are fine at the same time: thumbnails stay in MEGA, permanent files live here.
+- Two different disks are fine at the same time: thumbnails stay in the backend's MEGA account,
+  permanent files live here.
 
-### 8.3 Install `megajs` next to the built assembly
+### 8.3 Install `megajs` next to the built assembly (backend/legacy MEGA path)
+
+> This step belongs to the repository backend's MEGA provider. The new RN client
+> uses S3 and does not need `megajs`; skip this if you are only exercising the
+> client's S3 upload.
 
 `MegaConnectivity.Core` embeds Node (libnode ships with the NuGet package) and calls
 `require('megajs')` with the **assembly directory** as the runtime's base dir
@@ -513,11 +580,13 @@ transport only accepts `0`, so it treats this success as a failure — see limit
 
 ---
 
-## 10. Step 6 — Legacy Mega REST bridge (not needed by the current app)
+## 10. Step 6 — Legacy Mega REST bridge (not used by the current S3 client)
 
-The current RN client talks to MEGA itself with `megajs`
-(`react_native_stash/src/services/megaHttpService.ts`), so **skip this step** unless you are running
-an older app build that still expects a host service with this contract:
+The current RN client no longer talks to MEGA: it uploads to S3
+(`react_native_stash/src/services/storage/`) and publishes upload requests as version 2.
+**Skip this step.** It is
+retained only for older MEGA-era app builds that still expect a host service with this contract;
+the current client never calls `/api/mega/*`.
 
 | Route | Request | Response |
 |---|---|---|
@@ -525,9 +594,10 @@ an older app build that still expects a host service with this contract:
 | `HEAD /api/mega/{fileName}` | — | `200` if present, `404` if not |
 | `GET /api/mega/{fileName}` | — | file bytes |
 
-It also sends (and the bridge may ignore) `X-Message-Version: 1`, `X-Mega-Email`, `X-Mega-Password`
-and `Authorization: Bearer <access token>`. The app no longer sends any of these: the modern
-`MegaHttpService` logs in with the account from `Storage.Mega.Email/Password`.
+Older MEGA-era builds also sent (and the bridge may ignore) `X-Message-Version: 1`, `X-Mega-Email`,
+`X-Mega-Password` and `Authorization: Bearer <access token>` to this bridge. The current S3 client
+sends no `X-Mega-*` headers and does not call the bridge at all. To Kafka, it still sends
+`Authorization: Bearer <access token>` and `X-Message-Version: 2` on upload requests.
 
 Create `tools/mega-bridge/` (or any folder outside the repo you prefer) with the two files in
 **Appendix A**, then:
@@ -555,8 +625,13 @@ Log in happens lazily on the first upload; a bad MEGA password returns `502` wit
 
 ## 11. Step 7 — React Native UI configuration
 
-All runtime configuration is one file: `react_native_stash/src/config/appconfig.json`
-(it is bundled at build time — restart Metro after editing).
+The app reads non-secret defaults from `react_native_stash/src/config/appconfig.json` and overlays
+`EXPO_PUBLIC_*` values from `.env` (both are bundled at build time — restart Metro after editing).
+The S3 keys are documented in detail in
+[`react_native_stash/docs/SETUP_AND_USAGE.md` §4.4](../react_native_stash/docs/SETUP_AND_USAGE.md#44-storage-s3).
+
+The checked-in `appconfig.json` has the S3 shape below (set `Kafka.RestUrl` to the local proxy for
+this runbook); secrets are normally supplied via `.env`:
 
 ```json
 {
@@ -574,10 +649,17 @@ All runtime configuration is one file: `react_native_stash/src/config/appconfig.
     "TopicDeadLetter": "stash.dlq"
   },
   "Storage": {
-    "Provider": "Mega",
-    "Mega": {
-      "Email": "you@example.com",
-      "Password": "…"
+    "Provider": "S3",
+    "S3": {
+      "Bucket": "",
+      "Region": "us-east-1",
+      "AccessKeyId": "",
+      "SecretAccessKey": "",
+      "SessionToken": "",
+      "Endpoint": "",
+      "ForcePathStyle": false,
+      "Prefix": "",
+      "PresignExpirySeconds": 3600
     }
   },
   "Auth": { "Jwt": { "Issuer": "stash-auth", "Audience": "stash-app" } },
@@ -595,8 +677,37 @@ All runtime configuration is one file: `react_native_stash/src/config/appconfig.
 | `Kafka.RestUrl` | `http://localhost:8082` | the app appends `/v3/...` and `/consumers/...` |
 | `Kafka.RestUsername/Password` | empty | the local proxy has no Basic auth; only set if you add one |
 | `Kafka.ClusterId` | empty | discovered from `GET /v3/clusters`; pin it to skip discovery |
-| `Storage.Mega.Email/Password` | your MEGA account | used directly by `megajs` on the device; blank values make uploads fail with “MEGA account is not configured” |
+| `Storage.Provider` | `S3` | the only supported provider |
+| `Storage.S3.Bucket` | your bucket | empty makes uploads fail with “Amazon S3 is not configured” |
+| `Storage.S3.Region` | `us-east-1` (AWS default) | must match the bucket's region |
+| `Storage.S3.AccessKeyId` / `SecretAccessKey` | your credentials | preferably via `EXPO_PUBLIC_S3_*` in `.env` |
+| `Storage.S3.SessionToken` | empty | set only for STS temporary credentials |
+| `Storage.S3.Endpoint` | empty for AWS | set for MinIO/R2/other S3-compatible endpoints |
+| `Storage.S3.ForcePathStyle` | `false` | `true` for MinIO and servers that require path-style |
+| `Storage.S3.Prefix` | empty | optional key prefix |
+| `Storage.S3.PresignExpirySeconds` | `3600` | presigned URL lifetime (1–604800) |
 | `BootstrapServers`/`Username`/`Password` | empty | the app never opens a native Kafka connection |
+
+Recommended `.env` for the local UI (secrets stay out of `appconfig.json`):
+
+```bash
+EXPO_PUBLIC_IDENTITY_API_BASE_URL=http://localhost:5102
+EXPO_PUBLIC_KAFKA_REST_URL=http://localhost:8082
+EXPO_PUBLIC_S3_BUCKET=<bucket>
+EXPO_PUBLIC_S3_REGION=us-east-1
+EXPO_PUBLIC_S3_ACCESS_KEY_ID=<access key>
+EXPO_PUBLIC_S3_SECRET_ACCESS_KEY=<secret>
+EXPO_PUBLIC_S3_ENDPOINT=
+EXPO_PUBLIC_S3_PREFIX=
+EXPO_PUBLIC_S3_FORCE_PATH_STYLE=false
+EXPO_PUBLIC_S3_PRESIGN_EXPIRY_SECONDS=3600
+```
+
+`EXPO_PUBLIC_*` values are inlined into the bundle, so use scoped credentials.
+The client writes the object at `[Prefix/]temp/uploads/{deviceId}/{fileName}` and publishes
+`storageTempPath` (the logical `/temp/uploads/...` path) with `storageProvider: "S3"` and
+`version: 2`. The repository host still expects `megaTempPath` and version 1, so it rejects these
+requests until S3/version-2 support is added (see the warning at the top and §16, L9).
 
 ### 11.1 Install and run
 
@@ -616,13 +727,21 @@ REST proxy must listen on `0.0.0.0`
 (it does; just publish the port). Start MongoDB/Azurite/Functions/Identity with the same LAN binding
 (`--urls http://0.0.0.0:5102`) and allow the Windows Firewall prompt.
 
+For a device, the S3 bucket/endpoint must also be reachable from the phone. AWS endpoints are public;
+a MinIO instance on the dev machine needs a LAN URL in `Storage.S3.Endpoint` (and `ForcePathStyle`).
+
 ---
 
 ## 12. Step 8 — End-to-end walkthrough
 
-Read **L1** and **L2** first: two client-side quirks mean the record does reach the backend and the
-work does complete, but the app reports the publish as failed and never applies the response. The
-walkthrough below states what you should observe *concretely*, including those two symptoms.
+> **This flow is not end-to-end with the current repository host.** The new RN client publishes
+> version 2 with `storageTempPath`/`storageProvider` and writes the temp object to S3, while the
+> host validator accepts only version 1 with `megaTempPath` and its provider is MEGA. The steps below
+> show what the client does and where the repository host stops until S3/version-2 support is added.
+
+Read **L1** and **L2** first: two client-side quirks mean the record may reach the broker and the
+work may complete on a compatible host, but the app can report the publish as failed and may not
+apply the response. The walkthrough states what you should observe *concretely*.
 
 1. **Register** — Login screen → *Create account* → email/password → *Register*.
    Identity API returns tokens; the app stores them plus a generated device ID in SecureStore
@@ -631,32 +750,34 @@ walkthrough below states what you should observe *concretely*, including those t
 2. **Add a folder** — Folders tab → FAB → pick a folder containing media files → *Scan now*.
    Files matching the 14 media patterns are hashed (SHA-256) and inserted as `Pending`.
 3. **Upload** — Files tab → *Upload files* (or wait for the 15-minute background pass).
-   The app: stats the file → logs into MEGA with `megajs` and uploads it there → keeps
-   `/temp/uploads/{deviceId}/{name}` as the logical path → produces a v3 record. Because of **L1** the record is stored but the app marks the row `Failed`
-   with `Kafka publish failed: Kafka REST produce returned error_code 200`. The backend nevertheless
-   picks it up.
-   *Check:* Function log shows `Started orchestration <correlationId> for file <sha256>`.
-4. **Processing** — the Durable orchestration downloads from Mega (physical name!), verifies the
-   hash equals `fileId`, checks dedup, converts HEIC/PNG/RAW→JPEG and MOV→MP4, writes three
-   thumbnails, stores the permanent copy as `{Storage:Local:RootPath}\backups\{userId}\{hash}.jpg`
-   on disk, deletes the temp file, publishes the response.
-   *Check:* the Functions log lists each activity, the configured library root contains one
-   `backups\{userId}\{sha256}.jpg` (or `.mp4`), the MEGA account shows the three
-   `thumbs_{userId}_{128|256|512}_…` files and **no** `backups_…` file, and the `temp_uploads_…`
-   file disappears after the cleanup step.
-5. **Response** — the host publishes `stash.upload.response`; the app's consumer polls it but hits
-   **L2** (hex key is not JSON) and never applies the record, so the row does not reach `Completed`
-   on its own. Inspect the topic instead (Aiven console → Topics → `stash.upload.response` → Messages).
-6. **Dedup** — upload the same file again: the backend returns `COMPLETED` with
-   `deduplicated: true` and no second copy is written.
+   The app: stats the file → presigns and `PUT`s it to S3 at
+   `[Prefix/]temp/uploads/{deviceId}/{name}` → keeps `/temp/uploads/{deviceId}/{name}` as the
+   logical path → produces a version-2 record. Because of **L1** the record may be stored while the
+   app marks the row `Failed` with
+   `Kafka publish failed: Kafka REST produce returned error_code 200`.
+   *Check:* the object exists in the bucket. With the repository host, the version-1 validator
+   rejects the v2 message, so no orchestration starts; inspect `stash.dlq` instead.
+4. **Processing (requires host S3/v2 support)** — a compatible host must read `storageTempPath` from
+   S3, verify the hash equals `fileId`, check dedup, convert HEIC/PNG/RAW→JPEG and MOV→MP4, write
+   thumbnails, store the permanent copy as
+   `{Storage:Local:RootPath}\backups\{userId}\{hash}.jpg` on disk, delete the S3 temp object, and
+   publish the response.
+   The repository host instead still downloads from MEGA by physical name, writes thumbnails to the
+   MEGA account, and has no S3 temp object to read — so this step cannot run for the new client.
+5. **Response** — the host publishes `stash.upload.response`; the app's consumer polls it but may hit
+   **L2** (hex key is not JSON) and not apply the record, so a row can stay at `Processing` on its
+   own. Inspect the topic instead (Aiven console → Topics → `stash.upload.response` → Messages).
+6. **Dedup** — with a compatible host, upload the same file again: it returns `COMPLETED` with
+   `deduplicated: true` and no second copy is written. This step also requires the S3/v2 host work.
 7. **DLQ** — produce to `stash.upload.request` with a bad key (not 64-hex) and watch the payload
-   land in `stash.dlq` with header `x-dlq-reason`, logged by `DeadLetterHandlerFunction`.
+   land in `stash.dlq` with header `x-dlq-reason`, logged by `DeadLetterHandlerFunction`. The
+   repository host also routes the new client's version-2 messages here via validation failure.
 
 ---
 
 ## 13. Config reference (all components)
 
-### 13.1 Identity API — `appsettings.json` / env
+### 13.1a Identity API — local .NET (appsettings.json / env)
 
 | Key | Default | Local note |
 |---|---|---|
@@ -668,16 +789,30 @@ walkthrough below states what you should observe *concretely*, including those t
 | `MongoDB:DatabaseName` | `stash` | |
 | `Cors:AllowedOrigins` | `http://localhost:5102`, `https://localhost:7094` | add `http://localhost:8081` for web |
 
+### 13.1b Identity API — Vercel function (environment variables)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MONGODB_URI` | — (required) | Same MongoDB database/collections as the .NET API |
+| `MONGODB_DATABASE` | `stash` | |
+| `JWT_SIGNING_KEY` | — (required) | Must equal the Kafka proxy and any host validating tokens |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | `stash-auth` / `stash-app` | Must match the proxy/host |
+| `AUTH_ACCESS_TOKEN_EXPIRY_MINUTES` | `15` | Clamped 1..1440 |
+| `AUTH_REFRESH_TOKEN_EXPIRY_DAYS` | `7` | Clamped 1..365 |
+| `AUTH_MAX_BODY_BYTES` | `65536` | Clamped 1024..1048576 |
+| `CORS_ALLOWED_ORIGINS` | `*` | Shared with the Kafka proxy |
+
 ### 13.2 Functions — `local.settings.json`
 
 See §8.1. Trigger/binding values must be plain app settings (the Kafka extension resolves them by
 name); `extensions.kafka.consumerGroup` in `host.json` is the default group, but each function
 overrides it (`stash-upload-request`, `stash-dlq-handler`).
 
-### 13.3 RN app — `appconfig.json`
+### 13.3 RN app — `appconfig.json` + `.env`
 
-See §11. `UploadSettings.MaxFileSizeBytes` (500 MB), `BatchSize` (10) and
-`BackgroundUpload.MaxFilesPerRun` (50) bound the work per pass.
+See §11. `Storage.Provider` is `S3`; `Storage.S3.*` supplies the bucket, region, credentials,
+endpoint/path-style, prefix and presign expiry. `UploadSettings.MaxFileSizeBytes` (500 MB),
+`BatchSize` (10) and `BackgroundUpload.MaxFilesPerRun` (50) bound the work per pass.
 
 ---
 
@@ -702,7 +837,16 @@ curl -s -o /dev/null -w 'consumer-create=%{http_code}\n' -X POST http://localhos
   -d '{"name":"smoke","format":"json","auto.offset.reset":"earliest","auto.commit.enable":"true"}'
 ```
 
-The MEGA step is exercised by the app itself (megajs); there is no local endpoint to smoke-test.
+The S3 step is exercised by the app itself: it presigns a `PUT` and writes to the configured bucket,
+so there is no local endpoint to smoke-test. To inspect the result with the same credentials, use
+the AWS CLI (or the provider console):
+
+```bash
+aws s3api head-object --bucket "$S3_BUCKET" \
+  --key "${S3_PREFIX:+$S3_PREFIX/}temp/uploads/<deviceId>/<fileName>"
+```
+
+No live S3 upload is performed by this runbook, and the repository host does not yet read S3.
 
 
 ---
@@ -713,19 +857,23 @@ The MEGA step is exercised by the app itself (megajs); there is no local endpoin
 |---|---|---|
 | `func: command not found` after npm install | npm 12 skipped the postinstall | install via winget/MSI, or unzip the CLI as in §2.1 |
 | Identity API exits with `Auth:Jwt:SigningKey is not configured` | launched from the wrong directory / config not found | run from `StashHost.IdentityApi`, or set the env var |
+| Vercel Identity API returns 500 or 401 | MongoDB/JWT env vars missing, or `JWT_SIGNING_KEY`/issuer/audience disagree with the Kafka proxy or host | set `MONGODB_URI` and the JWT variables on the Vercel project; keep the JWT values identical across the proxy and any host validating tokens |
 | Browser: *blocked by CORS policy* on login/register | origin `http://localhost:8081` not allowed | start with `Cors__AllowedOrigins__0=http://localhost:8081` |
 | Functions: `Failed to resolve 'kafka.dev.aivencloud.com'` | placeholder broker | set `Kafka:BootstrapServers` to your Aiven host |
 | Functions: `SSL handshake failed` / `certificate verify failed` | broker uses Aiven's project CA, librdkafka trusts only the OS store | enable public CA certificates for the service, or import `ca.pem` into the Windows trusted roots |
 | Functions: `Authentication failed` / SASL errors | SASL not enabled, wrong user, or Kafka 4.x with librdkafka 2.6.0 | enable `kafka_authentication_methods.sasl`, re-copy credentials, see §3.1 step 5 |
 | REST proxy: `Connection to node -1 … failed authentication` | same SASL/CA problem on the Java client side | check `KAFKA_REST_CLIENT_SASL_JAAS_CONFIG` and the PEM truststore |
 | Functions: `%Kafka:BootstrapServers%` / no trigger | setting missing or empty | keep the setting name exactly as the trigger references it |
-| Orchestration fails immediately with `Download failed … not found` | the app and host disagree on the physical file name (or the upload went to a sub-folder) | keep `src/utils/megaPathMapper.ts` identical to `MegaPathMapper.cs`; the bridge (Appendix A) is only for legacy builds |
-| `megajs module not found` in activity logs | `npm install megajs` missing in `bin/Debug/net10.0` | install it there (§8.3) |
+| Orchestration fails immediately with `Download failed … not found` | the host is looking in MEGA for an object the new client wrote to S3, or the host prefix/region is wrong | This is the S3/v2 host gap (§1 warning). The legacy `MegaPathMapper` rule applies only to old MEGA-era clients/bridge builds. |
+| App requests are rejected and land in `stash.dlq` | repository host validator accepts version 1 only | implement S3 + version 2 on the host (see SETUP_AND_USAGE §11) |
+| `megajs module not found` in activity logs (backend MEGA path) | `npm install megajs` missing in `bin/Debug/net10.0` | install it there (§8.3); this affects the backend's legacy MEGA provider, not the S3 client |
 | `Local storage is not configured. Set Storage:Local:RootPath …` | permanent-storage setting missing or empty | set `Storage:Local:RootPath` (§8.2) |
 | `Store permanent file failed: Access to the path … is denied` | host account cannot write the library folder / share | grant write permission or change `Storage:Local:RootPath` |
 | Re-upload always reprocesses instead of deduplicating | `Storage:Local:RootPath` changed, so the hash file lives elsewhere | expected after moving the library; keep the same root for stable dedup |
-| App: *MEGA account is not configured* | `Storage.Mega.Email` or `Password` empty | fill both in `appconfig.json` (§11) |
-| App: *MEGA login failed … Wrong password?* | MEGA rejected the credentials (or the account has 2FA) | correct the account in `appconfig.json` |
+| App: *Amazon S3 is not configured…* | bucket/region/access key/secret empty | set the `EXPO_PUBLIC_S3_*` variables (§11) |
+| App: S3 `403` (signature, access or expired credentials) | wrong secret/region, clock skew, missing bucket permissions, or expired STS token | check credentials/region, device clock, bucket policy and session token |
+| App: S3 `404` / wrong object | bucket/key/region/prefix or endpoint mismatch | verify bucket, `Storage.S3.Prefix`, region and `Endpoint`/`ForcePathStyle` |
+| App web: CORS failure on S3 | bucket has no CORS rule for the Expo origin | allow `PUT`/`GET`/`HEAD` from `http://localhost:8081` |
 | App: *Kafka REST proxy is not configured* | `Kafka.RestUrl` empty | §11 |
 | App: `Kafka REST cluster discovery returned no cluster_id` | talking to Karapace (v2-only) | use the local Confluent proxy (§9) |
 | App upload 404 on `/v3/clusters/...` | same as above | same |
@@ -757,33 +905,46 @@ status stops at `Processing` even though the backend completed the work.
 **L3 — Aiven's own REST proxy is not usable.** Karapace implements Confluent REST Proxy v1/v2 only;
 the v3 records API (needed for record headers) is not available there. Hence the local proxy.
 
-**L4 — Flat Mega layout.** `MegaPathMapper` encodes the whole logical path into a single root-level
-file name; folders are not created in MEGA. A shared account used by other tools may collide on the
-encoded prefix, and listing files shows hashed suffixes.
+**L4 — Flat Mega layout (backend/legacy).** The backend's `MegaPathMapper` encodes the whole logical
+path into a single root-level file name; folders are not created in MEGA. A shared account used by
+other tools may collide on the encoded prefix, and listing files shows hashed suffixes. The new RN
+client no longer uses this mapping.
 
-**L5 — The legacy bridge is a dev tool.** Only pre-megajs app builds use it (Appendix A): it performs
-a fresh megajs login per process, buffers uploads in memory, has no auth of its own, and ignores the
-`X-Mega-*` headers. Never expose it beyond localhost. The current app logs into MEGA on the device,
-so its MEGA credentials are bundled with the app.
+**L5 — The legacy bridge is a dev tool (legacy MEGA builds).** Only pre-S3/MEGA-era app builds use it
+(Appendix A): it performs a fresh megajs login per process, buffers uploads in memory, has no auth of
+its own, and ignores the `X-Mega-*` headers. Never expose it beyond localhost. The current client
+uploads to S3 and does not call the bridge.
 
-**L6 — Response topic has no per-user filter.** Every app instance consumes all `stash.upload.response`
-records and matches by `fileId`; the REST proxy retains messages for other devices' files. Acceptable
-for a single-user dev box.
+**L6 — Response filtering depends on the transport.** The Vercel Kafka proxy filters
+`stash.upload.response` records to the token's device/user and drops records with no usable
+`deviceId`. This runbook's Confluent REST proxy path has no equivalent server-side filter, so every
+instance can read other devices' records and matches them locally by `fileId`/identity. The gateway
+still reads the shared topic before filtering (read amplification), and offsets commit before the
+client applies a record; an ACK/inbox protocol remains a known gap.
 
 **L7 — Web is a development target.** Expo web works (SQLite via wasm, document picker via Blob
-URIs), but file-system scanning of local folders is only meaningful on Android/iOS.
+URIs), but file-system scanning of local folders is only meaningful on Android/iOS. Web uploads also
+need a bucket CORS rule; native builds do not.
 
 **L8 — The local library has no per-user access control of its own.** `LocalStorageProvider` writes
 `{Storage:Local:RootPath}/backups/{userId}/…` on one filesystem; isolation between users is by folder
 name only. Protect the library with OS/share permissions (and back it up yourself) if more than one
 person can reach the host. Thumbnails still live in the MEGA account, so the library is not a
-self-contained mirror until those move too.
+self-contained mirror until those move too. This remains a backend concern; the new client's temp
+objects are in S3.
+
+**L9 — Client/host contract mismatch (S3 vs MEGA).** The new RN client uploads to S3 and publishes
+version 2 (`storageTempPath`, `storageProvider: "S3"`), while the repository host validates version 1
+with `megaTempPath` and uses MEGA as its staging provider. Until the host implements S3 and accepts
+version 2, uploads from the new client are rejected (DLQ) and no end-to-end S3 verification is
+possible. This is the primary follow-up for this runbook.
 
 ---
 
 ## 17. Verification status
 
-Performed on this machine while writing this guide:
+The backend checks below were performed against this repository's MEGA/version-1 path. The RN rows
+reflect the S3 implementation; no live S3 upload is claimed.
 
 | Check | Result |
 |---|---|
@@ -795,15 +956,18 @@ Performed on this machine while writing this guide:
 | REST proxy v2 consume | works with JSON keys; fails on hex keys (L2) |
 | REST proxy CORS for Expo web | `Access-Control-Allow-Origin` echoed |
 | `dotnet test StashHost.Tests` | 143 passing: local library round-trip/overwrite/traversal, `StorePermanentActivity` writing a real photo under a temp root, dedup seeing the stored file |
-| `npx tsc --noEmit` in `react_native_stash` | exit 0 with the megajs client |
-| `npx expo export` (web and android) | both bundle `megajs` (browser build) with no Node built-ins |
-| MEGA physical naming parity | `toMegaPhysicalName` produced byte-identical names to `MegaPathMapper.GetPhysicalFileName` for temp/thumb/backup paths |
-| megajs login path with the app's crypto shim | MEGA answered `Wrong password?` for a probe account, i.e. PBKDF2/SHA-256 were computed and the login request was accepted |
+| `npx tsc --noEmit` in `react_native_stash` | passed with exit 0 after the S3 migration |
+| RN dependency audit | lockfile regenerated with `npm install --package-lock-only`; no `react-native-mega` reference in `package.json` or `package-lock.json`; storage dependencies remain `js-sha256` + `expo-file-system` |
+| `npx expo export` (web and android) | both succeeded after the S3 migration: web 796 modules; Android 1095 modules (~2.9 MB HBC); no device testing claimed |
+| S3 presign/transfer path | presigner cross-checked against AWS's published presigned-URL example (canonical-request hash and signature matched) and an independent Python `hashlib`/`hmac` reference for virtual-hosted and path-style-with-session-token cases (signatures byte-identical); native `uploadAsync`/`downloadAsync` and the Android `content://` staging branch validated at bundle/type level only, not on a device |
+| S3 end-to-end upload/download/processing | **not verified**; requires real bucket credentials and a host that accepts version 2 and reads S3 |
+| MEGA physical naming parity | backend-only historical check (`MegaPathMapper`); the RN client no longer maps names |
+| megajs login path (legacy MEGA) | backend/legacy probe; not part of the current S3 client |
 
 **Not verified here** — requires your credentials: Aiven connectivity from the Functions host and the
-REST proxy, plus a real MEGA upload/download, therefore the full upload → convert → store → response
-loop.
-The local library path itself needs no credentials; it is covered by the test suite above.
+REST proxy, a real S3 upload/download/processing, and a host that reads S3 and accepts version 2.
+Therefore the full S3 upload → convert → store → response loop is not verified. The local library path
+itself needs no credentials; it is covered by the test suite above (on the backend's MEGA/version-1 path).
 
 ---
 
@@ -830,7 +994,7 @@ uninstalling / clearing site data in the browser.
 
 ---
 
-## Appendix A — Legacy Mega REST bridge (reference implementation, not used by the current app)
+## Appendix A — Legacy Mega REST bridge (reference implementation, not used by the current S3 client)
 
 `tools/mega-bridge/package.json`
 
@@ -1020,8 +1184,8 @@ Notes:
 
 ## Appendix B — Message contracts
 
-`stash.upload.request` (key = SHA-256 hex, headers `Authorization`, `X-Correlation-Id`,
-`X-Device-Id`, `X-User-Id`, `X-Message-Version`):
+`stash.upload.request` — **new RN client (v2)** (key = SHA-256 hex, headers `Authorization`,
+`X-Correlation-Id`, `X-Device-Id`, `X-User-Id`, `X-Message-Version`):
 
 ```json
 {
@@ -1031,14 +1195,18 @@ Notes:
   "fileName": "IMG_0001.HEIC",
   "fileSize": 4821004,
   "mimeType": "image/heic",
-  "megaTempPath": "/temp/uploads/<deviceId>/IMG_0001.HEIC",
+  "storageTempPath": "/temp/uploads/<deviceId>/IMG_0001.HEIC",
+  "storageProvider": "S3",
   "metadata": null,
   "deviceId": "<device id>",
   "userId": "<user id>",
   "correlationId": "<uuid>",
-  "version": 1
+  "version": 2
 }
 ```
+
+The repository host's current validator rejects this message because it expects version 1 and
+`megaTempPath`; see the top warning and L9.
 
 `stash.upload.response` (key = SHA-256 hex):
 
@@ -1052,15 +1220,19 @@ Notes:
   "deduplicated": false,
   "processingTimeMs": 4213,
   "error": null,
+  "deviceId": "<device id>",
+  "userId": "<user id>",
   "correlationId": "<uuid>",
   "version": 1
 }
 ```
 
-Validation rules that cause a DLQ trip (`UploadRequestValidator` + `KafkaTriggerFunction`): version
-≠ 1, `fileId` not 64-hex, key ≠ `fileId`, missing/invalid JWT header, JWT `userId`/`deviceId` not
-matching the payload, missing correlation id, file name containing separators, `fileSize` ≤ 0 or
-> 500 MB, `megaTempPath` not under `/temp/`.
+**Repository host (version 1/MEGA) validation rules** that cause a DLQ trip
+(`UploadRequestValidator` + `KafkaTriggerFunction`): version ≠ 1, `fileId` not 64-hex, key ≠
+`fileId`, missing/invalid JWT header, JWT `userId`/`deviceId` not matching the payload, missing
+correlation id, file name containing separators, `fileSize` ≤ 0 or > 500 MB, `megaTempPath` not
+under `/temp/`. The new version-2 message fails the version and `megaTempPath` checks, which is why
+the host must be updated before the new client can complete the flow.
 
 ## Appendix C — Optional `docker-compose.yml` for the local infrastructure
 

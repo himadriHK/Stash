@@ -25,7 +25,7 @@ import {
   parseCorsOrigins,
   readJsonBody,
 } from './http.ts';
-import { buildRecordHeaders, parseProduceRequest } from './records.ts';
+import { buildRecordHeaders, filterRecordsForAuth, parseProduceRequest } from './records.ts';
 import { assertTopicAllowed } from './topics.ts';
 
 const SERVICE = 'stash-kafka-proxy-vercel';
@@ -84,7 +84,13 @@ async function handlePoll(
   const maxRecords = clampInt(url.searchParams.get('maxRecords') ?? undefined, 50, 1, 200);
   const groupId = consumerGroupFor(config, auth.deviceId);
 
-  const records = await gateway.poll({ groupId, topic, timeoutMs, maxRecords });
+  const polled = await gateway.poll({ groupId, topic, timeoutMs, maxRecords });
+
+  // gateway.poll may read other devices' records from the shared response topic
+  // (read amplification remains), but they are filtered here and never returned
+  // to this device. Offsets are still committed by the gateway; an ACK/inbox
+  // protocol that commits after delivery is a known follow-up.
+  const records = filterRecordsForAuth(polled, auth);
 
   return jsonResponse(
     { records, topic, group: groupId, polledAt: new Date().toISOString() },

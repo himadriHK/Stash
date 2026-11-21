@@ -7,10 +7,15 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-import type { AppConfig } from './config.ts';
 import { HttpError } from './http.ts';
 
 const CLOCK_SKEW_SECONDS = 30;
+
+export interface JwtVerificationConfig {
+  jwtSigningKey: string;
+  jwtIssuer: string;
+  jwtAudience: string;
+}
 
 export interface AuthContext {
   userId: string;
@@ -51,7 +56,7 @@ function audienceMatches(claim: unknown, expected: string): boolean {
 }
 
 /** Verifies signature, algorithm, issuer, audience and lifetime, then extracts the identity. */
-export function verifyAccessToken(token: string, config: AppConfig): AuthContext {
+export function verifyAccessToken(token: string, config: JwtVerificationConfig): AuthContext {
   if (!token) {
     throw new HttpError(401, 'invalid_token', 'A bearer access token is required.');
   }

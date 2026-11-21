@@ -1,6 +1,6 @@
 /**
  * Upload screen: pick media files (document picker), flag oversize files,
- * hash + dedup into SQLite, then batch upload to Mega and publish Kafka upload
+ * hash + dedup into SQLite, then batch upload to S3 and publish Kafka upload
  * requests. Mirrors the documented manual-upload workflow.
  */
 import React, { useCallback, useState } from 'react';
@@ -22,6 +22,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes } from '../theme/typography';
 import { formatBytesAsMb, formatFileSize } from '../utils/format';
 import { mimeTypeForFile } from '../services/folderScannerService';
+import { shouldYield, yieldToEventLoop } from '../utils/cooperative';
 
 interface PickedFile {
   uri: string;
@@ -80,7 +81,12 @@ export function UploadScreen() {
     try {
       const entities = [];
       let hashFailed = 0;
+      let processed = 0;
       for (const file of picked) {
+        processed += 1;
+        if (shouldYield(processed)) {
+          await yieldToEventLoop();
+        }
         const hash = await folderScanner.computeFileHashAsync(file.uri, file.size);
         if (!hash) {
           hashFailed += 1;
@@ -139,7 +145,7 @@ export function UploadScreen() {
           <EmptyState
             icon="cloud-upload-outline"
             title="No files selected"
-            subtitle="Pick media files to upload to Mega storage"
+            subtitle="Pick media files to upload to S3 storage"
           />
         ) : (
           picked.map((file) => {

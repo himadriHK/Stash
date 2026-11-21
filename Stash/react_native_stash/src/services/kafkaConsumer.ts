@@ -1,6 +1,7 @@
 /**
  * Mobile response consumer: applies host upload responses to the local file
- * database. Mirrors Stash.Maui/Services/KafkaConsumer.cs.
+ * database through the lifecycle service. Mirrors
+ * Stash.Maui/Services/KafkaConsumer.cs.
  *
  * The consumer group is stable per installation (`stash-mobile-{deviceId}`).
  */
@@ -8,8 +9,9 @@ import { getOrCreateDeviceIdAsync } from '../auth/authenticationService';
 import { appConfig } from '../config/appConfig';
 import type { FileRepository } from '../data/fileRepository';
 import { parseUploadResponseMessage } from '../models/messages';
-import { UploadStatus } from '../models/uploadStatus';
+import type { FileLifecycleService } from './fileLifecycleService';
 import type { KafkaTransport, KafkaTransportRecord } from './kafkaTransport';
+import { recordConsumerRecord } from './runtimeState';
 
 export class KafkaConsumer {
   private abortController: AbortController | null = null;
@@ -18,6 +20,7 @@ export class KafkaConsumer {
   constructor(
     private readonly transport: KafkaTransport,
     private readonly fileRepository: FileRepository,
+    private readonly lifecycle: FileLifecycleService,
   ) {}
 
   /** Runs the consume loop until the given signal is aborted. */
@@ -78,33 +81,45 @@ export class KafkaConsumer {
         return;
       }
 
-      const completed = response.status.toUpperCase() === 'COMPLETED';
-      const failed = response.status.toUpperCase() === 'FAILED';
-      if (!completed && !failed) {
+      const status = response.status.toUpperCase();
+      if (status !== 'COMPLETED' && status !== 'FAILED') {
         console.warn(
           `Ignoring upload response ${response.messageId} with unsupported status ${response.status}.`,
         );
         return;
       }
 
-      const file = await this.fileRepository.getByContentHashAsync(response.fileId);
-      if (!file) {
-        console.debug(`Ignoring response for unknown local file ${response.fileId}.`);
-        return;
+      const maxRetries = Math.max(0, Math.floor(appConfig.UploadSettings.MaxRetries));
+      const outcome = await this.lifecycle.applyResponseAsync(response, maxRetries);
+      switch (outcome) {
+        case 'applied':
+          console.info(
+            `Applied upload response ${response.messageId} to file ${response.fileId}: ${status}.`,
+          );
+          break;
+        case 'duplicate':
+          console.debug(`Ignoring duplicate upload response ${response.messageId}.`);
+          break;
+        case 'mismatch':
+          console.warn(
+            `Ignoring upload response ${response.messageId}: identity or correlation mismatch for ${response.fileId}.`,
+          );
+          break;
+        case 'stale':
+          console.debug(
+            `Ignoring stale upload response ${response.messageId} for ${response.fileId}.`,
+          );
+          break;
+        default:
+          console.debug(
+            `Ignoring upload response ${response.messageId} for ${response.fileId}: ${outcome}.`,
+          );
+          break;
       }
 
-      file.status = completed ? UploadStatus.Completed : UploadStatus.Failed;
-      file.permanentPath = response.permanentPath ?? null;
-      file.thumbnails = response.thumbnails ?? {};
-      file.convertedFormat = response.convertedFormat ?? null;
-      file.isDeduplicated = response.deduplicated;
-      file.errorMessage = response.error ?? null;
-      file.lastAttemptAt = new Date().toISOString();
-
-      await this.fileRepository.updateAsync(file);
-      console.info(
-        `Applied upload response ${response.messageId} to file ${response.fileId}: ${response.status}.`,
-      );
+      // A record was accepted and handled (applied, duplicate, stale or
+      // ignored); surface the latest handling time in diagnostics.
+      recordConsumerRecord();
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw error;

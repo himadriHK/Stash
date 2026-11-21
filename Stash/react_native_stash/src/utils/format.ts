@@ -33,13 +33,3 @@ export function formatDate(value?: string | null): string {
   return date.toLocaleString();
 }
 
-/** Converts a unix timestamp (seconds, as returned by FileInfo) to ISO. */
-export function unixSecondsToIso(seconds?: number | null): string {
-  if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) {
-    return new Date().toISOString();
-  }
-  // Modification times are seconds since epoch; tolerate milliseconds too.
-  const millis = seconds > 1e12 ? seconds : seconds * 1000;
-  const date = new Date(millis);
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
-}

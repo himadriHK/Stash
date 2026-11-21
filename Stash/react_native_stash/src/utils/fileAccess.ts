@@ -15,17 +15,10 @@
  * device.
  */
 import { Platform } from 'react-native';
-import { Directory, File, Paths } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import { base64ToBytes } from './base64';
 import { logError } from './errorLogger';
 import { isStoragePermissionError } from './storagePermissions';
-
-export interface LocalFileInfo {
-  exists: boolean;
-  isDirectory: boolean;
-  size?: number;
-  modificationTime?: number;
-}
 
 /** Scheme of a URI, used as log context (`content`, `file`, `blob`, …). */
 function uriScheme(uri: string): string {
@@ -85,7 +78,7 @@ export async function readFileBytesAsync(uri: string): Promise<Uint8Array> {
   // Handle content:// URIs (Android SAF) - the new API doesn't support them.
   // Use the legacy API to copy to the cache directory first.
   if (uri.startsWith('content://')) {
-    const tempUri = Paths.cache + `temp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const tempUri = Paths.cache.uri + `temp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     try {
       const legacyModule = await import('expo-file-system/legacy');
       await legacyModule.copyAsync({ from: uri, to: tempUri });
@@ -102,6 +95,13 @@ export async function readFileBytesAsync(uri: string): Promise<Uint8Array> {
         tempUri,
       });
       throw new Error(`Unable to read content:// URI: ${uri}. Error: ${error}${permissionHint(error)}`);
+    } finally {
+      try {
+        const temporary = new File(tempUri);
+        if (temporary.exists) {
+          temporary.delete();
+        }
+      } catch {}
     }
   }
 
@@ -199,61 +199,4 @@ export async function localFileSizeAsync(uri: string, fallback = 0): Promise<num
     }
   }
   return fallback;
-}
-
-/**
- * Stats a local path. Browsers expose no filesystem metadata or directory
- * listings, so web always reports "unknown" and callers handle it.
- */
-export async function statLocalPathAsync(uri: string): Promise<LocalFileInfo | null> {
-  if (Platform.OS === 'web') {
-    return null;
-  }
-
-  try {
-    const file = new File(uri);
-    if (file.exists) {
-      const info = file.info();
-      return {
-        exists: true,
-        isDirectory: false,
-        size: info.size,
-        modificationTime: info.modificationTime,
-      };
-    }
-
-    const directory = new Directory(uri);
-    if (directory.exists) {
-      const info = directory.info();
-      return {
-        exists: true,
-        isDirectory: true,
-        size: info.size,
-        modificationTime: info.modificationTime,
-      };
-    }
-    return null;
-  } catch (newApiError) {
-    // Fallback to legacy API for compatibility.
-    try {
-      const legacyModule = await import('expo-file-system/legacy');
-      const info = await legacyModule.getInfoAsync(uri);
-      if (!info.exists) {
-        return null;
-      }
-      return {
-        exists: true,
-        isDirectory: info.isDirectory ?? false,
-        size: 'size' in info ? info.size : undefined,
-        modificationTime: 'modificationTime' in info ? info.modificationTime : undefined,
-      };
-    } catch (legacyError) {
-      await logError('fileAccess.statLocalPath', legacyError, {
-        uri,
-        scheme: uriScheme(uri),
-        newApiError: newApiError instanceof Error ? newApiError.message : String(newApiError),
-      });
-      return null;
-    }
-  }
 }

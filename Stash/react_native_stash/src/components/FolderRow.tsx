@@ -17,6 +17,9 @@ interface FolderRowProps {
  */
 export function FolderRow({ folder, onPress, onToggle }: FolderRowProps) {
   const { colors } = useTheme();
+  const pathLabel = folder.folderPath.startsWith('content://')
+    ? 'System folder'
+    : folder.folderPath;
 
   return (
     <Pressable
@@ -37,7 +40,7 @@ export function FolderRow({ folder, onPress, onToggle }: FolderRowProps) {
           {folder.folderName}
         </Text>
         <Text numberOfLines={1} style={[styles.path, { color: colors.textMuted }]}>
-          {folder.folderPath}
+          {pathLabel}
         </Text>
       </View>
       <Switch

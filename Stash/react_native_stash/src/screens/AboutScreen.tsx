@@ -42,9 +42,9 @@ export function AboutScreen() {
         </View>
 
         <Text style={[styles.description, { color: colors.text }]}>
-          Stash scans your folders, hashes files locally, uploads them to Mega storage in batches
-          and tracks every transfer through its Kafka pipeline — with full light and dark mode
-          support.
+          Stash scans your folders, hashes files locally, uploads them to S3-compatible object
+          storage in batches and tracks every transfer through its Kafka pipeline — with full
+          light and dark mode support.
         </Text>
 
         <Text style={[styles.sectionTitle, { color: colors.headline }]}>Design system</Text>

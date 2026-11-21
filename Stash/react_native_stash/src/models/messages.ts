@@ -19,7 +19,8 @@ export interface UploadRequestMessage {
   fileName: string;
   fileSize: number;
   mimeType: string;
-  megaTempPath: string;
+  storageTempPath: string;
+  storageProvider: string;
   metadata?: FileMetadata | null;
   deviceId: string;
   userId: string;
@@ -40,6 +41,8 @@ export interface UploadResponseMessage {
   processingTimeMs: number;
   error?: string | null;
   correlationId: string;
+  deviceId?: string;
+  userId?: string;
   version: number;
 }
 
@@ -47,6 +50,7 @@ export function createUploadRequestMessage(
   file: FileEntity,
   deviceId: string,
   userId: string,
+  storageProvider: string,
 ): UploadRequestMessage {
   return {
     messageId: uuid(),
@@ -55,7 +59,8 @@ export function createUploadRequestMessage(
     fileName: file.fileName,
     fileSize: file.fileSize,
     mimeType: file.mimeType,
-    megaTempPath: file.megaTempPath ?? '',
+    storageTempPath: file.storageTempPath ?? '',
+    storageProvider,
     metadata: {
       createdAt: file.createdAt,
       modifiedAt: file.modifiedAt,
@@ -63,7 +68,7 @@ export function createUploadRequestMessage(
     deviceId: file.deviceId || deviceId,
     userId: file.userId || userId,
     correlationId: uuid(),
-    version: 1,
+    version: 2,
   };
 }
 
@@ -85,6 +90,8 @@ export function parseUploadResponseMessage(raw: string): UploadResponseMessage |
       processingTimeMs: parsed.processingTimeMs ?? 0,
       error: parsed.error ?? null,
       correlationId: parsed.correlationId ?? '',
+      deviceId: typeof parsed.deviceId === 'string' ? parsed.deviceId : undefined,
+      userId: typeof parsed.userId === 'string' ? parsed.userId : undefined,
       version: parsed.version ?? 1,
     };
   } catch {

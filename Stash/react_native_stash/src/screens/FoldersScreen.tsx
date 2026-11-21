@@ -4,13 +4,13 @@
  * documented Folders behaviour of Stash.Maui.
  */
 import React, { useCallback, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { FlatList, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { ActionDialog } from '../components/ActionDialog';
 import { AddFolderDialog } from '../components/AddFolderDialog';
 import { EmptyState } from '../components/EmptyState';
-import { ScreenTitle } from '../components/FormText';
+import { NoteText, ScreenTitle } from '../components/FormText';
 import { FolderRow } from '../components/FolderRow';
 import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
@@ -18,6 +18,7 @@ import { createFolderConfig, type FolderConfig } from '../models/folderConfig';
 import { folderRepository } from '../services/singletons';
 import { scanFolderAsync } from '../services/uploadActions';
 import { useTheme } from '../theme/ThemeContext';
+import { requestStorageAccessAsync } from '../utils/storagePermissions';
 
 export function FoldersScreen() {
   const { colors } = useTheme();
@@ -44,15 +45,23 @@ export function FoldersScreen() {
   );
 
   const onAdd = useCallback(
-    async (folderPath: string) => {
+    async (folderPath: string, folderName?: string) => {
       setDialogVisible(false);
       try {
+        if (Platform.OS === 'android' && !folderPath.startsWith('content://')) {
+          const access = await requestStorageAccessAsync();
+          if (access.state !== 'granted') {
+            toast.show(access.detail, { color: colors.error });
+            return;
+          }
+        }
+
         const existing = await folderRepository.getByPathAsync(folderPath);
         if (existing) {
           toast.show('This folder is already configured.');
           return;
         }
-        await folderRepository.addAsync(createFolderConfig({ folderPath }));
+        await folderRepository.addAsync(createFolderConfig({ folderPath, folderName }));
         toast.show('Folder added successfully');
         await load();
       } catch (error) {
@@ -118,6 +127,11 @@ export function FoldersScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScreenTitle>Folders</ScreenTitle>
+      <NoteText style={styles.folderNote}>
+        {Platform.OS === 'web'
+          ? 'Folder scanning is not available in the browser. Use Upload → Pick Files.'
+          : 'Folders are added with the system picker. On iOS, access lasts for the current session and must be re-selected after the app restarts.'}
+      </NoteText>
 
       {folders === null ? (
         <EmptyState icon="folder-outline" title="Loading…" subtitle="" />
@@ -157,7 +171,7 @@ export function FoldersScreen() {
       <AddFolderDialog
         visible={dialogVisible}
         onCancel={() => setDialogVisible(false)}
-        onAdd={(path) => void onAdd(path)}
+        onAdd={(path, name) => void onAdd(path, name)}
       />
 
       <ActionDialog
@@ -185,6 +199,10 @@ export function FoldersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  folderNote: {
+    marginHorizontal: 16,
+    marginBottom: 8,
   },
   listContent: {
     paddingBottom: 96,

@@ -12,9 +12,10 @@ import { useFonts, OpenSans_400Regular } from '@expo-google-fonts/open-sans';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { AuthProvider, useAuth } from './src/auth/AuthContext';
 import { ToastProvider } from './src/components/ToastContext';
-import { StoragePermissionGate } from './src/components/StoragePermissionGate';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { RootNavigator } from './src/navigation/RootNavigator';
-import { backgroundUploadScheduler, kafkaConsumer, megaService } from './src/services/singletons';
+import { backgroundUploadScheduler, fileLifecycleService, kafkaConsumer, storageProvider } from './src/services/singletons';
+import { appConfig } from './src/config/appConfig';
 import { installGlobalErrorLogger } from './src/utils/errorLogger';
 
 /** Starts/stops the scheduled upload pass and Kafka consumer with auth. */
@@ -23,11 +24,19 @@ function BackgroundServices() {
 
   useEffect(() => {
     if (status === 'authenticated') {
+      // Recover stale lifecycle state immediately on boot instead of waiting for
+      // the first scheduled pass, so previously interrupted transfers resume.
+      void fileLifecycleService
+        .recoverStaleAsync({
+          maxRetries: appConfig.UploadSettings.MaxRetries,
+          maxHostRetries: appConfig.UploadSettings.MaxHostRetries,
+        })
+        .catch((error) => console.warn('Startup lifecycle recovery failed.', error));
       backgroundUploadScheduler.schedule();
       kafkaConsumer.start();
-      // Authenticate against MEGA in the background so the first transfer does
-      // not pay for the login.
-      void megaService.warmUpAsync();
+      // Warm up and validate the S3 configuration in the background so the
+      // first transfer starts immediately.
+      void storageProvider.warmUpAsync();
       return () => {
         backgroundUploadScheduler.cancel();
         void kafkaConsumer.stop();
@@ -47,8 +56,6 @@ function Shell() {
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       <RootNavigator />
       <BackgroundServices />
-      {/* Asks for Android storage permissions on launch and explains blockers. */}
-      <StoragePermissionGate />
       <StatusBar style={dark ? 'light' : 'dark'} />
     </View>
   );
@@ -76,7 +83,9 @@ export default function App() {
       <ThemeProvider>
         <AuthProvider>
           <ToastProvider>
-            <Shell />
+            <ErrorBoundary>
+              <Shell />
+            </ErrorBoundary>
           </ToastProvider>
         </AuthProvider>
       </ThemeProvider>

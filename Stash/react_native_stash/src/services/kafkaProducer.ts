@@ -13,8 +13,8 @@ import type { UploadRequestMessage, UploadResponseMessage } from '../models/mess
 import { uuid } from '../utils/id';
 import type { KafkaTransport } from './kafkaTransport';
 
-function createHeaders(): Record<string, string> {
-  return { 'X-Message-Version': '1' };
+function createHeaders(version: number = 1): Record<string, string> {
+  return { 'X-Message-Version': String(version) };
 }
 
 export class KafkaProducer {
@@ -39,7 +39,7 @@ export class KafkaProducer {
     message.userId = userId;
     message.correlationId = correlationId;
 
-    const headers = createHeaders();
+    const headers = createHeaders(message.version);
     headers.Authorization = `Bearer ${accessToken}`;
     headers['X-Correlation-Id'] = correlationId;
     if (deviceId) {

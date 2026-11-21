@@ -17,7 +17,7 @@ export interface FileEntity {
   modifiedAt: string;
   discoveredAt: string;
   status: UploadStatus;
-  megaTempPath?: string | null;
+  storageTempPath?: string | null;
   permanentPath?: string | null;
   errorMessage?: string | null;
   retryCount: number;
@@ -28,6 +28,17 @@ export interface FileEntity {
   thumbnails: Record<string, string>;
   convertedFormat?: string | null;
   isDeduplicated: boolean;
+  /** Phase 0 lifecycle timestamps; written by the Phase 1 lifecycle service. */
+  uploadStartedAt?: string | null;
+  processingStartedAt?: string | null;
+  lastResponseAt?: string | null;
+  requestCorrelationId?: string | null;
+  requestMessageId?: string | null;
+  /** Host-processing retry budget, separate from transfer `retryCount`. */
+  hostRetryCount: number;
+  nextAttemptAt?: string | null;
+  failureStage?: string | null;
+  updatedAt?: string | null;
 }
 
 export type FileEntityDraft = Partial<FileEntity> &
@@ -35,6 +46,7 @@ export type FileEntityDraft = Partial<FileEntity> &
 
 export function createFileEntity(draft: FileEntityDraft): FileEntity {
   const now = new Date().toISOString();
+  const discoveredAt = draft.discoveredAt ?? now;
   return {
     id: draft.id ?? uuid(),
     fileName: draft.fileName,
@@ -44,9 +56,9 @@ export function createFileEntity(draft: FileEntityDraft): FileEntity {
     mimeType: draft.mimeType ?? 'application/octet-stream',
     createdAt: draft.createdAt ?? now,
     modifiedAt: draft.modifiedAt ?? now,
-    discoveredAt: draft.discoveredAt ?? now,
+    discoveredAt,
     status: draft.status ?? UploadStatus.Pending,
-    megaTempPath: draft.megaTempPath ?? null,
+    storageTempPath: draft.storageTempPath ?? null,
     permanentPath: draft.permanentPath ?? null,
     errorMessage: draft.errorMessage ?? null,
     retryCount: draft.retryCount ?? 0,
@@ -56,5 +68,14 @@ export function createFileEntity(draft: FileEntityDraft): FileEntity {
     thumbnails: draft.thumbnails ?? {},
     convertedFormat: draft.convertedFormat ?? null,
     isDeduplicated: draft.isDeduplicated ?? false,
+    uploadStartedAt: draft.uploadStartedAt ?? null,
+    processingStartedAt: draft.processingStartedAt ?? null,
+    lastResponseAt: draft.lastResponseAt ?? null,
+    requestCorrelationId: draft.requestCorrelationId ?? null,
+    requestMessageId: draft.requestMessageId ?? null,
+    hostRetryCount: draft.hostRetryCount ?? 0,
+    nextAttemptAt: draft.nextAttemptAt ?? null,
+    failureStage: draft.failureStage ?? null,
+    updatedAt: draft.updatedAt ?? discoveredAt,
   };
 }

@@ -17,7 +17,13 @@ import {
   errorLogUri,
   readErrorLogTailAsync,
 } from '../utils/errorLogger';
-import { formatBytesAsMb } from '../utils/format';
+import { formatBytesAsMb, formatDate } from '../utils/format';
+import {
+  collectDiagnosticsAsync,
+  type DiagnosticsSnapshot,
+  type RecentFileEvent,
+  type StatusCount,
+} from '../services/diagnosticsService';
 import {
   getStorageAccessAsync,
   openStorageSettingsAsync,
@@ -48,12 +54,64 @@ function SectionTitle({ children }: { children: string }) {
   return <Text style={[styles.sectionTitle, { color: colors.headline }]}>{children}</Text>;
 }
 
+function countFor(entries: StatusCount[], status: string): number {
+  return entries.find((entry) => entry.status.toLowerCase() === status.toLowerCase())?.count ?? 0;
+}
+
+function filesSummary(snapshot: DiagnosticsSnapshot): string {
+  if (snapshot.totalFiles === 0) {
+    return 'No files';
+  }
+  return snapshot.files.map((entry) => `${entry.status}: ${entry.count}`).join(' · ');
+}
+
+function outboxSummary(snapshot: DiagnosticsSnapshot): string {
+  const total = snapshot.outbox.reduce((sum, entry) => sum + entry.count, 0);
+  if (total === 0) {
+    return 'No outbox rows';
+  }
+  return ['pending', 'sending', 'sent', 'dead']
+    .map((status) => `${status}: ${countFor(snapshot.outbox, status)}`)
+    .join(' · ');
+}
+
+function lastPassSummary(snapshot: DiagnosticsSnapshot): string {
+  if (!snapshot.lastPass) {
+    return 'Not run yet';
+  }
+  const { at, result } = snapshot.lastPass;
+  return `${formatDate(at)} · uploaded ${result.uploaded}, queued ${result.queued}, failed ${result.failed}`;
+}
+
+function lastFlushSummary(snapshot: DiagnosticsSnapshot): string {
+  if (!snapshot.lastOutboxFlush) {
+    return 'Not run yet';
+  }
+  const { at, result } = snapshot.lastOutboxFlush;
+  return `${formatDate(at)} · sent ${result.sent}, retried ${result.retried}, dead ${result.dead}`;
+}
+
+function eventLine(event: RecentFileEvent): string {
+  const transition =
+    event.fromStatus && event.toStatus
+      ? `${event.fromStatus}→${event.toStatus}`
+      : event.fromStatus || event.toStatus || '—';
+  const parts = [formatDate(event.createdAt), event.event, transition];
+  if (event.errorCode) {
+    parts.push(event.errorCode);
+  }
+  return parts.join('  ');
+}
+
 export function SettingsScreen() {
   const { colors, mode, setMode } = useTheme();
   const { userId, deviceId, logout } = useAuth();
   const toast = useToast();
   const [errorLog, setErrorLog] = useState<string | null>(null);
   const [storageAccess, setStorageAccess] = useState<StorageAccess | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
   const logPath = errorLogUri();
 
   const refreshStorageAccess = useCallback(async () => {
@@ -64,10 +122,26 @@ export function SettingsScreen() {
     }
   }, []);
 
+  const refreshDiagnostics = useCallback(async () => {
+    setDiagnosticsLoading(true);
+    try {
+      const snapshot = await collectDiagnosticsAsync();
+      setDiagnostics(snapshot);
+      setDiagnosticsError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDiagnosticsError(message);
+      toast.show(message, { color: colors.error });
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  }, [toast, colors.error]);
+
   useFocusEffect(
     useCallback(() => {
       void refreshStorageAccess();
-    }, [refreshStorageAccess]),
+      void refreshDiagnostics();
+    }, [refreshStorageAccess, refreshDiagnostics]),
   );
 
   const onGrantStorage = useCallback(async () => {
@@ -153,6 +227,11 @@ export function SettingsScreen() {
         <SettingsRow label="Identity API" value={identityApiBaseUrl() ?? 'Not configured'} />
         <SettingsRow label="Request timeout" value={`${appConfig.IdentityApiTimeoutSeconds}s`} />
         <SettingsRow label="Storage provider" value={appConfig.Storage.Provider} />
+        <SettingsRow
+          label="Storage bucket"
+          value={appConfig.Storage.S3.Bucket || 'Not configured'}
+        />
+        <SettingsRow label="Storage region" value={appConfig.Storage.S3.Region || '—'} />
         <SettingsRow label="Upload batch size" value={String(appConfig.UploadSettings.BatchSize)} />
         <SettingsRow label="Maximum retries" value={String(appConfig.UploadSettings.MaxRetries)} />
         <SettingsRow
@@ -188,14 +267,80 @@ export function SettingsScreen() {
 
         <SectionTitle>Diagnostics</SectionTitle>
         <SettingsRow
-          label="Storage permission"
+          label="Files by status"
+          value={diagnostics ? filesSummary(diagnostics) : '—'}
+        />
+        <SettingsRow
+          label="Stuck uploads"
+          value={diagnostics ? String(diagnostics.stuckUploading) : '—'}
+        />
+        <SettingsRow
+          label="Stuck processing"
+          value={diagnostics ? String(diagnostics.stuckProcessing) : '—'}
+        />
+        <SettingsRow label="Outbox" value={diagnostics ? outboxSummary(diagnostics) : '—'} />
+        <SettingsRow
+          label="Hash cache entries"
+          value={diagnostics ? String(diagnostics.hashCacheEntries) : '—'}
+        />
+        <SettingsRow
+          label="Processed responses"
+          value={diagnostics ? String(diagnostics.processedMessages) : '—'}
+        />
+        <SettingsRow
+          label="Last background pass"
+          value={diagnostics ? lastPassSummary(diagnostics) : '—'}
+        />
+        <SettingsRow
+          label="Last outbox flush"
+          value={diagnostics ? lastFlushSummary(diagnostics) : '—'}
+        />
+        <SettingsRow
+          label="Last Kafka response"
+          value={
+            diagnostics
+              ? diagnostics.lastConsumerRecordAt
+                ? formatDate(diagnostics.lastConsumerRecordAt)
+                : 'None'
+              : '—'
+          }
+        />
+        <View style={styles.eventBlock}>
+          <Text style={[styles.rowLabel, { color: colors.textMuted }]}>Recent file events</Text>
+          <Text selectable style={[styles.eventText, { color: colors.text }]}>
+            {diagnostics
+              ? diagnostics.recentEvents.length > 0
+                ? diagnostics.recentEvents.map(eventLine).join('\n')
+                : 'None'
+              : '—'}
+          </Text>
+        </View>
+        <View style={styles.diagnosticsButtons}>
+          <AppButton
+            title={diagnosticsLoading ? 'Refreshing…' : 'Refresh diagnostics'}
+            onPress={() => void refreshDiagnostics()}
+            disabled={diagnosticsLoading}
+            testID="RefreshDiagnosticsButton"
+          />
+        </View>
+        {diagnosticsError ? (
+          <NoteText style={[styles.permissionNote, { color: colors.error }]}>
+            {`Diagnostics unavailable: ${diagnosticsError}`}
+          </NoteText>
+        ) : null}
+        <NoteText style={styles.permissionNote}>
+          Storage access below applies to manually entered file paths only. Folders added with the
+          system picker use per-folder grants and do not need these broad permissions.
+        </NoteText>
+        <SettingsRow
+          label="Legacy path storage access"
           value={storageAccess?.summary ?? 'Checking…'}
         />
         {storageAccess && storageAccess.state !== 'granted' && storageAccess.state !== 'unsupported' ? (
           <>
             <View style={styles.diagnosticsButtons}>
               <AppButton
-                title="Grant storage access"
+                title="Grant legacy path access"
                 onPress={() => void onGrantStorage()}
                 testID="GrantStorageAccessButton"
               />
@@ -315,6 +460,15 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   logText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 11,
+  },
+  eventBlock: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    gap: 4,
+  },
+  eventText: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 11,
   },

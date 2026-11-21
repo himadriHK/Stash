@@ -1,5 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
@@ -16,7 +17,7 @@ import { ScreenTitle } from '../components/FormText';
 import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
 import type { RootStackParamList } from '../navigation/types';
-import { fileRepository, backgroundUploadService, uploadManager } from '../services/singletons';
+import { fileRepository, backgroundUploadService } from '../services/singletons';
 import { uploadAndPublishAsync } from '../services/uploadActions';
 import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus, uploadStatusDisplayName } from '../models/uploadStatus';
@@ -24,6 +25,8 @@ import { useTheme } from '../theme/ThemeContext';
 import { formatFileSize, formatDate } from '../utils/format';
 
 type Props = NativeStackNavigationProp<RootStackParamList>;
+
+const PAGE_SIZE = 50;
 
 /**
  * Files screen: card list with status chips, error lines, retry/details menu,
@@ -41,20 +44,60 @@ export function FilesScreen() {
   const [menuFile, setMenuFile] = useState<FileEntity | null>(null);
   const [detailsFile, setDetailsFile] = useState<FileEntity | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
-  const load = useCallback(async () => {
+  const filesRef = useRef<FileEntity[] | null>(null);
+  const loadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(true);
+
+  /**
+   * Loads one page. `reset` restarts at offset 0 (focus, refresh, retry);
+   * otherwise the next page is appended and de-duplicated by row id.
+   */
+  const loadPage = useCallback(async (reset: boolean) => {
+    if (!reset && (loadingMoreRef.current || !hasMoreRef.current)) {
+      return;
+    }
+    if (!reset) {
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    }
+
+    const offset = reset ? 0 : filesRef.current?.length ?? 0;
     try {
-      setFiles(await fileRepository.getAllAsync());
+      const page = await fileRepository.getPageAsync(PAGE_SIZE, offset);
+      setFiles((current) => {
+        let next: FileEntity[];
+        if (reset || !current) {
+          next = page;
+        } else {
+          const seen = new Set(current.map((item) => item.id));
+          next = [...current, ...page.filter((item) => !seen.has(item.id))];
+        }
+        filesRef.current = next;
+        return next;
+      });
+      hasMoreRef.current = page.length === PAGE_SIZE;
+      setHasMore(hasMoreRef.current);
     } catch (error) {
       console.warn('Failed to load files.', error);
-      setFiles([]);
+      if (reset) {
+        filesRef.current = [];
+        setFiles([]);
+      }
+    } finally {
+      if (!reset) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
-      void load();
-    }, [load]),
+      void loadPage(true);
+    }, [loadPage]),
   );
 
   const onRefresh = useCallback(async () => {
@@ -74,10 +117,10 @@ export function FilesScreen() {
     } catch (error) {
       toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
     } finally {
-      await load();
+      await loadPage(true);
       setRefreshing(false);
     }
-  }, [status, toast, colors.error, load]);
+  }, [status, toast, colors.error, loadPage]);
 
   const onRetry = useCallback(
     async (file: FileEntity) => {
@@ -89,7 +132,7 @@ export function FilesScreen() {
       try {
         const fresh = await fileRepository.getByIdAsync(file.id);
         if (!fresh) {
-          await load();
+          await loadPage(true);
           return;
         }
         const outcome = await uploadAndPublishAsync(fresh);
@@ -102,10 +145,10 @@ export function FilesScreen() {
         toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
       } finally {
         setRetrying(false);
-        await load();
+        await loadPage(true);
       }
     },
-    [retrying, toast, load],
+    [retrying, toast, colors.error, loadPage],
   );
 
   const menuNeedsRetry =
@@ -133,6 +176,17 @@ export function FilesScreen() {
             <FileCard file={item} onPress={setDetailsFile} onMorePress={setMenuFile} />
           )}
           contentContainerStyle={styles.listContent}
+          onEndReached={() => {
+            if (hasMore) {
+              void loadPage(false);
+            }
+          }}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator style={styles.footer} color={colors.primarySolid} />
+            ) : undefined
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primarySolid} />
           }
@@ -178,7 +232,7 @@ export function FilesScreen() {
                 `MIME type: ${detailsFile.mimeType}`,
                 `Content hash: ${detailsFile.contentHash}`,
                 `Retries: ${detailsFile.retryCount}`,
-                `Mega temp path: ${detailsFile.megaTempPath ?? '—'}`,
+                `Storage temp path: ${detailsFile.storageTempPath ?? '—'}`,
                 `Permanent path: ${detailsFile.permanentPath ?? '—'}`,
                 `Device ID: ${detailsFile.deviceId || '—'}`,
                 `Last attempt: ${formatDate(detailsFile.lastAttemptAt)}`,
@@ -199,6 +253,9 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 96,
+  },
+  footer: {
+    paddingVertical: 16,
   },
   fab: {
     position: 'absolute',

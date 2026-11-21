@@ -143,3 +143,43 @@ export function toRecord(
     offset: Number(message.offset),
   };
 }
+
+/**
+ * Keeps only records that belong to the authenticated device (and user, when
+ * the record identifies one). gateway.poll may read other devices' records from
+ * the shared response topic, so read amplification remains, but those records
+ * are never returned to this device. Unidentified/legacy records with no usable
+ * deviceId are excluded.
+ */
+export function filterRecordsForAuth(
+  records: KafkaRecord[],
+  auth: AuthContext,
+): KafkaRecord[] {
+  const deviceId = auth.deviceId.trim();
+  return records.filter((record) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(record.value);
+    } catch {
+      return false;
+    }
+    if (!isPlainObject(parsed)) {
+      return false;
+    }
+
+    const recordDeviceId = typeof parsed.deviceId === 'string' ? parsed.deviceId.trim() : '';
+    if (!recordDeviceId || recordDeviceId !== deviceId) {
+      return false;
+    }
+
+    const rawUserId = parsed.userId;
+    if (rawUserId === undefined || rawUserId === null) {
+      return true;
+    }
+    if (typeof rawUserId !== 'string') {
+      return false;
+    }
+    const recordUserId = rawUserId.trim();
+    return recordUserId.length === 0 || recordUserId === auth.userId;
+  });
+}
