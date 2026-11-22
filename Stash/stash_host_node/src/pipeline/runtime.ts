@@ -71,6 +71,7 @@ export class PipelineRuntime {
   private readonly events: EventRepository;
   private readonly outbox: OutboxRepository;
   private readonly local: LocalLibrary;
+  private readonly storage: S3Storage;
   private readonly producer: KafkaProducer;
   private readonly dispatcher: OutboxDispatcher;
   private readonly runner: PipelineRunner;
@@ -93,6 +94,7 @@ export class PipelineRuntime {
     this.events = new EventRepository(deps.db);
     this.outbox = new OutboxRepository(deps.db);
     this.local = new LocalLibrary(deps.env);
+    this.storage = new S3Storage(deps.env);
     this.producer = new KafkaProducer(deps.env, deps.logger);
     this.dispatcher = new OutboxDispatcher(this.outbox, this.producer, {
       retryBaseMs: deps.env.RETRY_BASE_MS,
@@ -104,7 +106,7 @@ export class PipelineRuntime {
       jobs: this.jobs,
       outbox: this.outbox,
       outboxDispatcher: this.dispatcher,
-      storage: new S3Storage(deps.env),
+      storage: this.storage,
       local: this.local,
       logger: deps.logger,
     });
@@ -114,6 +116,7 @@ export class PipelineRuntime {
       outbox: this.outbox,
       runner: this.runner,
       local: this.local,
+      storage: this.storage,
       logger: deps.logger,
     });
     this.consumer = new KafkaRequestConsumer(

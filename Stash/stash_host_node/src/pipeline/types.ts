@@ -7,7 +7,10 @@ import type { OutboxDispatcher } from '../kafka/outboxDispatcher';
 import type { LocalLibrary } from '../storage/local';
 import type { S3Storage } from '../storage/s3';
 
-export type StoragePort = Pick<S3Storage, 'getObjectStream' | 'deleteObject' | 'headObject'>;
+export type StoragePort = Pick<
+  S3Storage,
+  'getObjectStream' | 'deleteObject' | 'headObject' | 'listObjects'
+>;
 
 export type HashFile = (
   path: string,

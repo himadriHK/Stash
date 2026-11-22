@@ -3,6 +3,7 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
@@ -20,6 +21,15 @@ export interface S3ObjectHead {
 export interface S3ObjectStream extends S3ObjectHead {
   stream: Readable;
 }
+
+export interface S3ObjectSummary {
+  key: string;
+  size: number;
+  lastModified: Date | null;
+}
+
+const LIST_PAGE_SIZE = 1_000;
+const LIST_MAX_OBJECTS_DEFAULT = 2_000;
 
 export type S3ErrorCode =
   | 'S3_NOT_FOUND'
@@ -240,6 +250,51 @@ export class S3Storage {
       contentType: output.ContentType ?? null,
       etag: output.ETag ?? null,
     };
+  }
+
+  /**
+   * Lists object summaries below a key prefix (paginated, bounded by
+   * `maxObjects`). Used to find staging objects that were never attached to a
+   * job, or whose delete step failed.
+   */
+  async listObjects(
+    prefix: string,
+    options: { maxObjects?: number; signal?: AbortSignal } = {},
+  ): Promise<S3ObjectSummary[]> {
+    this.assertBucket();
+    const maxObjects = Math.min(
+      LIST_MAX_OBJECTS_DEFAULT * 5,
+      Math.max(1, Math.trunc(options.maxObjects ?? LIST_MAX_OBJECTS_DEFAULT)),
+    );
+    const summaries: S3ObjectSummary[] = [];
+    let token: string | undefined;
+
+    try {
+      do {
+        const output = await this.client.send(
+          new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: prefix,
+            ContinuationToken: token,
+            MaxKeys: LIST_PAGE_SIZE,
+          }),
+          { abortSignal: options.signal },
+        );
+        for (const item of output.Contents ?? []) {
+          if (!item.Key) continue;
+          summaries.push({
+            key: item.Key,
+            size: item.Size ?? 0,
+            lastModified: item.LastModified ?? null,
+          });
+        }
+        token = output.IsTruncated ? output.NextContinuationToken : undefined;
+      } while (token && summaries.length < maxObjects);
+    } catch (error) {
+      throw classifyS3Error(error);
+    }
+
+    return summaries;
   }
 
   async deleteObject(key: string, signal?: AbortSignal): Promise<void> {

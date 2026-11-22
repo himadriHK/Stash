@@ -799,6 +799,17 @@ export class JobRepository {
     })();
   }
 
+  /** Storage keys still referenced by a queued or running job. */
+  activeStorageKeys(): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT storage_key FROM jobs
+         WHERE storage_key IS NOT NULL AND status IN ('queued','running')`,
+      )
+      .all() as { storage_key: string }[];
+    return new Set(rows.map((row) => row.storage_key));
+  }
+
   countActiveByStorageKey(storageKey: string, excludeJobId: string): number {
     const row = this.db
       .prepare(

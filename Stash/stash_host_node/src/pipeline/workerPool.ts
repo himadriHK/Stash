@@ -4,9 +4,12 @@ import type { AppEnv } from '../config/env';
 import type { JobRepository } from '../db/jobs';
 import type { OutboxRepository } from '../db/outbox';
 import type { LocalLibrary } from '../storage/local';
+import { buildS3Key } from '../storage/paths';
 import { sanitizeErrorMessage } from './response';
 import type { PipelineRunner } from './runner';
+import { sweepStaleStagingObjects, type StagingSweepResult } from './staleS3Sweep';
 import { cleanupStaleTempDirs, type TempCleanupResult } from './tempCleanup';
+import type { StoragePort } from './types';
 
 export interface WorkerPoolDeps {
   env: AppEnv;
@@ -14,6 +17,7 @@ export interface WorkerPoolDeps {
   outbox: OutboxRepository;
   runner: PipelineRunner;
   local: LocalLibrary;
+  storage: StoragePort;
   logger?: Logger;
   now?: () => Date;
 }
@@ -28,6 +32,8 @@ export interface WorkerPoolStatus {
 
 const IDLE_SLEEP_MS = 1_000;
 const IDLE_JITTER_MS = 500;
+const STAGING_SWEEP_INTERVAL_MS = 3_600_000;
+const STAGING_LOGICAL_PREFIX = '/temp/uploads';
 
 export class WorkerPool {
   private readonly abort = new AbortController();
@@ -38,6 +44,7 @@ export class WorkerPool {
   private closed = false;
   private running = 0;
   private lastError: string | null = null;
+  private lastStagingSweepAt: number | null = null;
 
   constructor(private readonly deps: WorkerPoolDeps) {
     this.clock = deps.now ?? (() => new Date());
@@ -61,6 +68,7 @@ export class WorkerPool {
     }
 
     await this.runTempCleanup();
+    await this.runStagingSweep();
 
     for (let index = 0; index < this.deps.env.WORKER_CONCURRENCY; index += 1) {
       const workerId = `worker-${index + 1}`;
@@ -77,6 +85,12 @@ export class WorkerPool {
         this.deps.logger?.warn({ error: this.lastError }, 'Lease recovery failed');
       }
       void this.runTempCleanup();
+      if (
+        this.lastStagingSweepAt === null ||
+        this.clock().getTime() - this.lastStagingSweepAt >= STAGING_SWEEP_INTERVAL_MS
+      ) {
+        void this.runStagingSweep();
+      }
     }, intervalMs);
     if (typeof this.recoveryTimer.unref === 'function') this.recoveryTimer.unref();
   }
@@ -135,6 +149,40 @@ export class WorkerPool {
       } finally {
         this.running = Math.max(0, this.running - 1);
       }
+    }
+  }
+
+  /**
+   * Deletes S3 staging objects that no job will remove: uploads that never
+   * produced a job and deletes that permanently failed.
+   */
+  private async runStagingSweep(): Promise<StagingSweepResult | null> {
+    if (!this.deps.env.S3_ENABLED || !this.deps.env.S3_BUCKET) return null;
+
+    try {
+      let stagingPrefix: string;
+      try {
+        stagingPrefix = buildS3Key(STAGING_LOGICAL_PREFIX, this.deps.env.S3_PREFIX);
+      } catch (error) {
+        this.lastError = sanitizeErrorMessage(error);
+        this.deps.logger?.warn({ error: this.lastError }, 'S3 staging sweep skipped: invalid prefix');
+        return null;
+      }
+
+      const result = await sweepStaleStagingObjects({
+        storage: this.deps.storage,
+        stagingPrefix,
+        retentionHours: this.deps.env.TEMP_RETENTION_HOURS,
+        activeKeys: this.deps.jobs.activeStorageKeys(),
+        logger: this.deps.logger,
+        now: this.clock,
+      });
+      this.lastStagingSweepAt = this.clock().getTime();
+      return result;
+    } catch (error) {
+      this.lastError = sanitizeErrorMessage(error);
+      this.deps.logger?.warn({ error: this.lastError }, 'S3 staging sweep failed');
+      return null;
     }
   }
 
