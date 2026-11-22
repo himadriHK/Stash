@@ -1,6 +1,7 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 
 export type MainTabParamList = {
+  Gallery: undefined;
   Files: undefined;
   Upload: undefined;
   Folders: undefined;
@@ -12,4 +13,5 @@ export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
+  Notifications: undefined;
 };

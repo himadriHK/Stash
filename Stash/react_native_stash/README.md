@@ -37,12 +37,18 @@ feature set documented in `FlutterStash*.md` and `ReactNativeStashPlan.md`.
   interval (`BackgroundUpload:IntervalMinutes`, max 50 files per run): scan →
   dedup → filter candidates → batch upload → publish → status bookkeeping.
   Runs on pull-to-refresh in Files as well.
-- **Screens** — Login, Register, Main shell with **Files / Upload / Folders /
-  Settings / About** tabs, status chips with the documented colors, empty
-  states, snackbar toasts, and a Settings readout of the effective config
-  (storage provider, bucket and region included). Settings → **Diagnostics**
-  shows a live health snapshot (file/outbox statuses, stuck rows, recent
-  `file_events`, last pass/flush/response) and the persistent error log.
+- **Screens** — Login, Register, and a main shell with **Gallery / Files /
+  Upload / Folders / Settings / About** tabs. **Gallery** mirrors the reviewed
+  mockup: a three-column media grid with All/Photos/Videos/Favorites filters,
+  search, per-tile status badges, long-press selection with share/remove, a
+  pending-sync badge and pull-to-refresh. **Notifications** (opened from the
+  Gallery bell) is a status feed with All/Uploads/Errors/Synced tabs, unread
+  markers, mark-all-read and retry for failed uploads. Folders gained include/
+  exclude pattern editing, subfolder choice and a details sheet (last scan,
+  patterns, subfolder toggle, scan/delete). Settings gained Backup Status (total
+  files/size/pending/last sync, storage readiness, **Sync now**), Auto-upload
+  and Backup videos preferences, and an About block. Status chips, empty states,
+  snackbar toasts, the effective-config readout and **Diagnostics** remain.
 
 ## Architecture
 

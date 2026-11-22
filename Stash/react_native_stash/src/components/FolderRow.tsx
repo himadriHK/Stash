@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { FolderConfig } from '../models/folderConfig';
 import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes } from '../theme/typography';
+import { formatRelativeTime } from '../utils/format';
 
 interface FolderRowProps {
   folder: FolderConfig;
@@ -42,6 +43,12 @@ export function FolderRow({ folder, onPress, onToggle }: FolderRowProps) {
         <Text numberOfLines={1} style={[styles.path, { color: colors.textMuted }]}>
           {pathLabel}
         </Text>
+        <Text numberOfLines={1} style={[styles.meta, { color: colors.textMuted }]}>
+          {`Last scan: ${
+            folder.lastScannedAt ? formatRelativeTime(folder.lastScannedAt) : 'Never'
+          } · ${folder.includePatterns.length} include · ${folder.excludePatterns.length} exclude`}
+          {folder.includeSubfolders ? ' · subfolders' : ''}
+        </Text>
       </View>
       <Switch
         value={folder.isEnabled}
@@ -78,6 +85,11 @@ const styles = StyleSheet.create({
   path: {
     fontFamily: FONT_FAMILY,
     fontSize: fontSizes.small,
+    marginTop: 2,
+  },
+  meta: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 11,
     marginTop: 2,
   },
 });

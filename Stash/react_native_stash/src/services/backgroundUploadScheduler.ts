@@ -11,11 +11,22 @@ import type { BackgroundUploadResult } from './backgroundUploadService';
 
 export class BackgroundUploadScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private enabled = true;
 
   constructor(private readonly runPass: () => Promise<BackgroundUploadResult>) {}
 
+  /** Applies the persisted Auto-upload preference immediately. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (enabled) {
+      this.schedule();
+    } else {
+      this.cancel();
+    }
+  }
+
   schedule(): void {
-    if (this.timer) {
+    if (this.timer || !this.enabled) {
       return;
     }
     if (!appConfig.BackgroundUpload.Enabled) {
@@ -41,7 +52,7 @@ export class BackgroundUploadScheduler {
   }
 
   private async tick(): Promise<void> {
-    if (!appConfig.BackgroundUpload.Enabled) {
+    if (!this.enabled || !appConfig.BackgroundUpload.Enabled) {
       return;
     }
     // Pause polling while the app is backgrounded (documented web/mobile

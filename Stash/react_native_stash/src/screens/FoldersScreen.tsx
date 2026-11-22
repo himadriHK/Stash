@@ -7,9 +7,9 @@ import React, { useCallback, useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { ActionDialog } from '../components/ActionDialog';
 import { AddFolderDialog } from '../components/AddFolderDialog';
 import { EmptyState } from '../components/EmptyState';
+import { FolderDetailsDialog } from '../components/FolderDetailsDialog';
 import { NoteText, ScreenTitle } from '../components/FormText';
 import { FolderRow } from '../components/FolderRow';
 import { useToast } from '../components/ToastContext';
@@ -20,13 +20,19 @@ import { scanFolderAsync } from '../services/uploadActions';
 import { useTheme } from '../theme/ThemeContext';
 import { requestStorageAccessAsync } from '../utils/storagePermissions';
 
+interface FolderScanOptions {
+  includePatterns?: string[];
+  excludePatterns?: string[];
+  includeSubfolders?: boolean;
+}
+
 export function FoldersScreen() {
   const { colors } = useTheme();
   const { status } = useAuth();
   const toast = useToast();
   const [folders, setFolders] = useState<FolderConfig[] | null>(null);
   const [dialogVisible, setDialogVisible] = useState(false);
-  const [menuFolder, setMenuFolder] = useState<FolderConfig | null>(null);
+  const [detailsFolder, setDetailsFolder] = useState<FolderConfig | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -45,7 +51,7 @@ export function FoldersScreen() {
   );
 
   const onAdd = useCallback(
-    async (folderPath: string, folderName?: string) => {
+    async (folderPath: string, folderName?: string, options?: FolderScanOptions) => {
       setDialogVisible(false);
       try {
         if (Platform.OS === 'android' && !folderPath.startsWith('content://')) {
@@ -61,7 +67,15 @@ export function FoldersScreen() {
           toast.show('This folder is already configured.');
           return;
         }
-        await folderRepository.addAsync(createFolderConfig({ folderPath, folderName }));
+        await folderRepository.addAsync(
+          createFolderConfig({
+            folderPath,
+            folderName,
+            includePatterns: options?.includePatterns,
+            excludePatterns: options?.excludePatterns,
+            includeSubfolders: options?.includeSubfolders,
+          }),
+        );
         toast.show('Folder added successfully');
         await load();
       } catch (error) {
@@ -115,7 +129,22 @@ export function FoldersScreen() {
     async (folder: FolderConfig) => {
       try {
         await folderRepository.deleteAsync(folder.id);
+        setDetailsFolder(null);
         toast.show('Folder deleted');
+        await load();
+      } catch (error) {
+        toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
+      }
+    },
+    [toast, colors.error, load],
+  );
+
+  const onToggleSubfolders = useCallback(
+    async (folder: FolderConfig, includeSubfolders: boolean) => {
+      try {
+        const updated = { ...folder, includeSubfolders };
+        await folderRepository.updateAsync(updated);
+        setDetailsFolder(updated);
         await load();
       } catch (error) {
         toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
@@ -148,7 +177,7 @@ export function FoldersScreen() {
           data={folders}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <FolderRow folder={item} onPress={setMenuFolder} onToggle={onToggle} />
+            <FolderRow folder={item} onPress={setDetailsFolder} onToggle={onToggle} />
           )}
           contentContainerStyle={styles.listContent}
         />
@@ -171,26 +200,16 @@ export function FoldersScreen() {
       <AddFolderDialog
         visible={dialogVisible}
         onCancel={() => setDialogVisible(false)}
-        onAdd={(path, name) => void onAdd(path, name)}
+        onAdd={(path, name, options) => void onAdd(path, name, options)}
       />
 
-      <ActionDialog
-        visible={menuFolder !== null}
-        title={menuFolder?.folderName ?? ''}
-        message={menuFolder?.folderPath}
-        buttons={[
-          {
-            label: 'Scan now',
-            onPress: () => menuFolder && void onScanNow(menuFolder),
-          },
-          {
-            label: 'Delete',
-            style: 'destructive' as const,
-            onPress: () => menuFolder && void onDelete(menuFolder),
-          },
-          { label: 'Close', style: 'cancel' as const },
-        ]}
-        onClose={() => setMenuFolder(null)}
+      <FolderDetailsDialog
+        visible={detailsFolder !== null}
+        folder={detailsFolder}
+        onClose={() => setDetailsFolder(null)}
+        onScan={(folder) => void onScanNow(folder)}
+        onDelete={(folder) => void onDelete(folder)}
+        onToggleSubfolders={(folder, value) => void onToggleSubfolders(folder, value)}
       />
     </View>
   );

@@ -15,6 +15,7 @@ import { ToastProvider } from './src/components/ToastContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { backgroundUploadScheduler, fileLifecycleService, kafkaConsumer, storageProvider } from './src/services/singletons';
+import { getUiPreferencesAsync } from './src/services/uiPreferences';
 import { appConfig } from './src/config/appConfig';
 import { installGlobalErrorLogger } from './src/utils/errorLogger';
 
@@ -33,6 +34,12 @@ function BackgroundServices() {
         })
         .catch((error) => console.warn('Startup lifecycle recovery failed.', error));
       backgroundUploadScheduler.schedule();
+      // Apply the persisted Auto-upload preference before the first pass fires.
+      void getUiPreferencesAsync()
+        .then((preferences) => backgroundUploadScheduler.setEnabled(preferences.autoUpload))
+        .catch(() => {
+          // Defaults already scheduled the pass; a storage read failure is harmless.
+        });
       kafkaConsumer.start();
       // Warm up and validate the S3 configuration in the background so the
       // first transfer starts immediately.

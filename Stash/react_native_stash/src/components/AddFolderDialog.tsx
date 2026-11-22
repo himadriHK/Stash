@@ -6,20 +6,39 @@ import {
   Platform,
   Pressable,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { Directory } from 'expo-file-system';
 import { folderNameFromPath } from '../models/folderConfig';
+import { defaultIncludePatterns } from '../models/mediaPatterns';
 import { ErrorText, NoteText } from './FormText';
 import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes, layout } from '../theme/typography';
 
+interface FolderScanOptions {
+  includePatterns: string[];
+  excludePatterns: string[];
+  includeSubfolders: boolean;
+}
+
 interface AddFolderDialogProps {
   visible: boolean;
   onCancel: () => void;
-  onAdd: (folderPath: string, folderName?: string) => void | Promise<void>;
+  onAdd: (
+    folderPath: string,
+    folderName?: string,
+    options?: FolderScanOptions,
+  ) => void | Promise<void>;
+}
+
+function parsePatterns(value: string): string[] {
+  return value
+    .split(/[\s,]+/)
+    .map((pattern) => pattern.trim())
+    .filter((pattern) => pattern.length > 0);
 }
 
 /**
@@ -35,6 +54,9 @@ export function AddFolderDialog({ visible, onCancel, onAdd }: AddFolderDialogPro
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerMessage, setPickerMessage] = useState<string | null>(null);
+  const [includePatterns, setIncludePatterns] = useState(defaultIncludePatterns.join(', '));
+  const [excludePatterns, setExcludePatterns] = useState('');
+  const [includeSubfolders, setIncludeSubfolders] = useState(true);
 
   useEffect(() => {
     if (visible) {
@@ -45,6 +67,9 @@ export function AddFolderDialog({ visible, onCancel, onAdd }: AddFolderDialogPro
       setPicking(false);
       setError(null);
       setPickerMessage(null);
+      setIncludePatterns(defaultIncludePatterns.join(', '));
+      setExcludePatterns('');
+      setIncludeSubfolders(true);
     }
   }, [visible]);
 
@@ -173,6 +198,57 @@ export function AddFolderDialog({ visible, onCancel, onAdd }: AddFolderDialogPro
 
             {error ? <ErrorText style={styles.error}>{error}</ErrorText> : null}
 
+            <View style={styles.options}>
+              <Text style={[styles.label, { color: colors.textMuted }]}>Include Patterns</Text>
+              <TextInput
+                value={includePatterns}
+                onChangeText={setIncludePatterns}
+                placeholder="*.jpg, *.png, *.mov"
+                placeholderTextColor={colors.placeholder}
+                selectionColor={colors.primarySolid}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[
+                  styles.input,
+                  {
+                    color: colors.inputText,
+                    borderColor: colors.border,
+                    backgroundColor: colors.background,
+                  },
+                ]}
+              />
+              <Text style={[styles.label, styles.optionsGap, { color: colors.textMuted }]}>
+                Exclude Patterns
+              </Text>
+              <TextInput
+                value={excludePatterns}
+                onChangeText={setExcludePatterns}
+                placeholder="*.tmp, *.cache"
+                placeholderTextColor={colors.placeholder}
+                selectionColor={colors.primarySolid}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[
+                  styles.input,
+                  {
+                    color: colors.inputText,
+                    borderColor: colors.border,
+                    backgroundColor: colors.background,
+                  },
+                ]}
+              />
+              <View style={styles.switchRow}>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>Include Subfolders</Text>
+                <Switch
+                  value={includeSubfolders}
+                  onValueChange={setIncludeSubfolders}
+                  trackColor={{ true: colors.switchTrackOn, false: colors.switchTrackOff }}
+                  thumbColor={colors.switchThumb}
+                  accessibilityLabel="Include subfolders"
+                />
+              </View>
+            </View>
+
             {!webUnavailable && !manualMode && Platform.OS === 'ios' ? (
               <NoteText style={styles.message}>
                 On iOS, folder access is granted for the current session and must be re-selected
@@ -205,7 +281,13 @@ export function AddFolderDialog({ visible, onCancel, onAdd }: AddFolderDialogPro
               <Pressable
                 accessibilityRole="button"
                 disabled={!canAdd}
-                onPress={() => void onAdd(effectivePath, effectiveName || undefined)}
+                onPress={() =>
+                  void onAdd(effectivePath, effectiveName || undefined, {
+                    includePatterns: parsePatterns(includePatterns),
+                    excludePatterns: parsePatterns(excludePatterns),
+                    includeSubfolders,
+                  })
+                }
                 style={({ pressed }) => [styles.action, pressed ? styles.pressed : null]}
               >
                 <Text
@@ -293,6 +375,23 @@ const styles = StyleSheet.create({
   },
   manualNote: {
     marginTop: 6,
+  },
+  options: {
+    marginTop: 14,
+  },
+  optionsGap: {
+    marginTop: 10,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    minHeight: 40,
+  },
+  switchLabel: {
+    fontFamily: FONT_FAMILY,
+    fontSize: fontSizes.body,
   },
   error: {
     marginTop: 10,

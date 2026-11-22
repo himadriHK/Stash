@@ -25,6 +25,7 @@ import type { FolderIngestionService } from './folderIngestionService';
 import type { KafkaProducer } from './kafkaProducer';
 import type { OutboxPublisher } from './outboxPublisher';
 import type { UploadManager } from './uploadManager';
+import { getUiPreferencesAsync } from './uiPreferences';
 import { recordBackgroundPass } from './runtimeState';
 
 export interface BackgroundUploadResult {
@@ -144,8 +145,15 @@ export class BackgroundUploadService {
         maxRetries,
         maxHostRetries,
       );
+      const preferences = await getUiPreferencesAsync().catch(() => null);
+      const includeVideos = preferences?.backupVideos ?? true;
       const candidates: FileEntity[] = [];
       for (const file of candidateRows) {
+        // "Backup videos" off means the automatic pass leaves video rows queued;
+        // a manual retry/upload still processes them.
+        if (!includeVideos && file.mimeType.toLowerCase().startsWith('video/')) {
+          continue;
+        }
         if (!(await localFileExistsAsync(file.filePath))) {
           await this.deps.lifecycle.markLocalMissingAsync(file.id, 'Local file not found.');
           continue;

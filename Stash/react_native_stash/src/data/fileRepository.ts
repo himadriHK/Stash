@@ -9,6 +9,13 @@ import { runTransactionAsync, runWriteAsync } from './transactionQueue';
 import type { FileEntity } from '../models/fileEntity';
 import { parseUploadStatus, UploadStatus } from '../models/uploadStatus';
 
+export interface FileSummary {
+  totalFiles: number;
+  totalBytes: number;
+  pendingCount: number;
+  lastActivityAt: string | null;
+}
+
 export interface FileRow {
   id: string;
   file_name: string;
@@ -184,6 +191,49 @@ export class FileRepository {
     return row?.value ?? 0;
   }
 
+  /**
+   * One aggregate query for the Gallery badge and Settings backup summary.
+   * Completed and deduplicated rows are terminal; everything else is pending.
+   */
+  async getSummaryAsync(): Promise<FileSummary> {
+    const db = await this.open();
+    const row = await db.getFirstAsync<{
+      total_files: number;
+      total_bytes: number;
+      pending_count: number;
+      last_activity_at: string | null;
+    }>(
+      `SELECT
+         COUNT(*) AS total_files,
+         COALESCE(SUM(file_size), 0) AS total_bytes,
+         COALESCE(SUM(CASE WHEN status NOT IN ('Completed', 'Deduplicated') THEN 1 ELSE 0 END), 0)
+           AS pending_count,
+         MAX(COALESCE(updated_at, last_response_at, last_attempt_at, processing_started_at,
+           upload_started_at, discovered_at)) AS last_activity_at
+       FROM files`,
+    );
+    return {
+      totalFiles: row?.total_files ?? 0,
+      totalBytes: row?.total_bytes ?? 0,
+      pendingCount: row?.pending_count ?? 0,
+      lastActivityAt: row?.last_activity_at ?? null,
+    };
+  }
+
+  /** Newest file rows for the Notification Center, ordered by latest activity. */
+  async getRecentActivityAsync(limit: number): Promise<FileEntity[]> {
+    const db = await this.open();
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50;
+    const rows = await db.getAllAsync<FileRow>(
+      `SELECT * FROM files
+       ORDER BY COALESCE(updated_at, last_response_at, last_attempt_at,
+         processing_started_at, upload_started_at, discovered_at) DESC
+       LIMIT ?`,
+      [safeLimit],
+    );
+    return rows.map(mapFileRow);
+  }
+
   async existsByContentHashAsync(contentHash: string): Promise<boolean> {
     const db = await this.open();
     const row = await db.getFirstAsync<{ value: number }>(
@@ -308,6 +358,22 @@ export class FileRepository {
   async deleteAsync(id: string): Promise<void> {
     const db = await this.open();
     await runWriteAsync(db, 'DELETE FROM files WHERE id = ?', [id]);
+  }
+
+  /** Removes several Gallery records in one transaction. */
+  async deleteManyAsync(ids: string[]): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const db = await this.open();
+    let deleted = 0;
+    await runTransactionAsync(db, async () => {
+      for (const id of ids) {
+        const result = await db.runAsync('DELETE FROM files WHERE id = ?', [id]);
+        deleted += result.changes;
+      }
+    });
+    return deleted;
   }
 }
 

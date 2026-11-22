@@ -6,6 +6,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import type { MainTabParamList } from './types';
+import { GalleryScreen } from '../screens/GalleryScreen';
 import { FilesScreen } from '../screens/FilesScreen';
 import { UploadScreen } from '../screens/UploadScreen';
 import { FoldersScreen } from '../screens/FoldersScreen';
@@ -22,6 +23,12 @@ const TABS: {
   icon: React.ComponentProps<typeof Ionicons>['name'];
   activeIcon: React.ComponentProps<typeof Ionicons>['name'];
 }[] = [
+  {
+    name: 'Gallery',
+    component: GalleryScreen,
+    icon: 'images-outline',
+    activeIcon: 'images',
+  },
   {
     name: 'Files',
     component: FilesScreen,

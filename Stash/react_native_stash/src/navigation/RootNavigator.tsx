@@ -10,6 +10,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
+import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { MainTabs } from './MainTabs';
 import type { RootStackParamList } from './types';
 import { useTheme } from '../theme/ThemeContext';
@@ -57,24 +58,31 @@ export function RootNavigator() {
         }}
       >
         {status === 'authenticated' ? (
-          <Stack.Screen
-            name="Main"
-            component={MainTabs}
-            options={{
-              title: 'Stash',
-              headerRight: () => (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => void logout()}
-                  testID="LogoutButton"
-                  hitSlop={8}
-                  style={({ pressed }) => [styles.logout, pressed ? styles.pressed : null]}
-                >
-                  <Text style={[styles.logoutLabel, { color: colors.link }]}>Log out</Text>
-                </Pressable>
-              ),
-            }}
-          />
+          <>
+            <Stack.Screen
+              name="Main"
+              component={MainTabs}
+              options={{
+                title: 'Stash',
+                headerRight: () => (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void logout()}
+                    testID="LogoutButton"
+                    hitSlop={8}
+                    style={({ pressed }) => [styles.logout, pressed ? styles.pressed : null]}
+                  >
+                    <Text style={[styles.logoutLabel, { color: colors.link }]}>Log out</Text>
+                  </Pressable>
+                ),
+              }}
+            />
+            <Stack.Screen
+              name="Notifications"
+              component={NotificationsScreen}
+              options={{ title: 'Notifications' }}
+            />
+          </>
         ) : (
           <>
             <Stack.Screen

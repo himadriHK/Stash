@@ -3,7 +3,8 @@
  * log out, and the read-only configuration summary from appconfig.json.
  */
 import React, { useCallback, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import * as Application from 'expo-application';
 import { useFocusEffect } from '@react-navigation/native';
 import { AppButton } from '../components/AppButton';
 import { NoteText, ScreenTitle } from '../components/FormText';
@@ -17,7 +18,7 @@ import {
   errorLogUri,
   readErrorLogTailAsync,
 } from '../utils/errorLogger';
-import { formatBytesAsMb, formatDate } from '../utils/format';
+import { formatBytesAsMb, formatDate, formatFileSize, formatRelativeTime } from '../utils/format';
 import {
   collectDiagnosticsAsync,
   type DiagnosticsSnapshot,
@@ -30,6 +31,18 @@ import {
   requestStorageAccessAsync,
   type StorageAccess,
 } from '../utils/storagePermissions';
+import type { FileSummary } from '../data/fileRepository';
+import {
+  backgroundUploadService,
+  backgroundUploadScheduler,
+  fileRepository,
+} from '../services/singletons';
+import {
+  getUiPreferencesAsync,
+  setAutoUploadAsync,
+  setBackupVideosAsync,
+  type UiPreferences,
+} from '../services/uiPreferences';
 
 const MODES: { value: ThemeMode; label: string }[] = [
   { value: 'system', label: 'System' },
@@ -52,6 +65,16 @@ function SettingsRow({ label, value }: { label: string; value: string }) {
 function SectionTitle({ children }: { children: string }) {
   const { colors } = useTheme();
   return <Text style={[styles.sectionTitle, { color: colors.headline }]}>{children}</Text>;
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[styles.statValue, { color: colors.text }]}>{value}</Text>
+      <Text style={[styles.statLabel, { color: colors.textMuted }]}>{label}</Text>
+    </View>
+  );
 }
 
 function countFor(entries: StatusCount[], status: string): number {
@@ -112,7 +135,12 @@ export function SettingsScreen() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<FileSummary | null>(null);
+  const [preferences, setPreferences] = useState<UiPreferences | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const logPath = errorLogUri();
+  const appVersion = Application.nativeApplicationVersion ?? '1.0.0';
+  const buildVersion = Application.nativeBuildVersion;
 
   const refreshStorageAccess = useCallback(async () => {
     try {
@@ -137,12 +165,79 @@ export function SettingsScreen() {
     }
   }, [toast, colors.error]);
 
+  const refreshSummary = useCallback(async () => {
+    try {
+      setSummary(await fileRepository.getSummaryAsync());
+    } catch (error) {
+      console.warn('Failed to load the backup summary.', error);
+    }
+  }, []);
+
+  const refreshPreferences = useCallback(async () => {
+    try {
+      setPreferences(await getUiPreferencesAsync());
+    } catch (error) {
+      console.warn('Failed to load UI preferences.', error);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       void refreshStorageAccess();
       void refreshDiagnostics();
-    }, [refreshStorageAccess, refreshDiagnostics]),
+      void refreshSummary();
+      void refreshPreferences();
+    }, [refreshStorageAccess, refreshDiagnostics, refreshSummary, refreshPreferences]),
   );
+
+  const onToggleAutoUpload = useCallback(
+    async (enabled: boolean) => {
+      try {
+        const next = await setAutoUploadAsync(enabled);
+        setPreferences(next);
+        backgroundUploadScheduler.setEnabled(enabled);
+        toast.show(enabled ? 'Auto-upload enabled' : 'Auto-upload disabled');
+      } catch (error) {
+        toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
+      }
+    },
+    [toast, colors.error],
+  );
+
+  const onToggleBackupVideos = useCallback(
+    async (enabled: boolean) => {
+      try {
+        const next = await setBackupVideosAsync(enabled);
+        setPreferences(next);
+        toast.show(enabled ? 'Videos included in automatic backup' : 'Videos excluded from automatic backup');
+      } catch (error) {
+        toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
+      }
+    },
+    [toast, colors.error],
+  );
+
+  const onSyncNow = useCallback(async () => {
+    if (syncing) {
+      return;
+    }
+    setSyncing(true);
+    try {
+      const result = await backgroundUploadService.runOnceAsync();
+      toast.show(
+        result.success
+          ? `Upload pass: ${result.scanned} scanned, ${result.discovered} new, ${result.uploaded} uploaded`
+          : result.error ?? 'Background upload pass failed.',
+        result.success ? undefined : { color: colors.error },
+      );
+      await refreshSummary();
+      await refreshDiagnostics();
+    } catch (error) {
+      toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
+    } finally {
+      setSyncing(false);
+    }
+  }, [syncing, toast, colors.error, refreshSummary, refreshDiagnostics]);
 
   const onGrantStorage = useCallback(async () => {
     try {
@@ -222,6 +317,79 @@ export function SettingsScreen() {
         <View style={styles.logoutButton}>
           <AppButton title="Log out" onPress={() => void onLogout()} testID="LogoutButton" />
         </View>
+
+        <SectionTitle>Backup Status</SectionTitle>
+        <View style={styles.statsGrid}>
+          <StatCard label="Total Files" value={summary ? String(summary.totalFiles) : '—'} />
+          <StatCard
+            label="Total Size"
+            value={summary ? formatFileSize(summary.totalBytes) : '—'}
+          />
+          <StatCard
+            label="Pending Upload"
+            value={summary ? String(summary.pendingCount) : '—'}
+          />
+          <StatCard
+            label="Last Sync"
+            value={summary ? formatRelativeTime(summary.lastActivityAt) : '—'}
+          />
+        </View>
+        <SettingsRow
+          label="Storage status"
+          value={
+            appConfig.Storage.S3.Bucket && appConfig.Storage.S3.AccessKeyId
+              ? 'Configured'
+              : 'Not configured'
+          }
+        />
+        <View style={styles.diagnosticsButtons}>
+          <AppButton
+            title={syncing ? 'Syncing…' : 'Sync now'}
+            onPress={() => void onSyncNow()}
+            disabled={syncing}
+            testID="SyncNowButton"
+          />
+        </View>
+        <NoteText style={styles.permissionNote}>
+          Runs the same scan, dedup, upload and publish pass as pulling to refresh.
+        </NoteText>
+
+        <SectionTitle>Preferences</SectionTitle>
+        <View style={[styles.switchRow, { borderBottomColor: colors.border }]}>
+          <View style={styles.switchBody}>
+            <Text style={[styles.switchLabel, { color: colors.text }]}>Auto-upload</Text>
+            <Text style={[styles.switchHint, { color: colors.textMuted }]}>
+              Automatically back up new files every{' '}
+              {appConfig.BackgroundUpload.IntervalMinutes} minutes while the app is open.
+            </Text>
+          </View>
+          <Switch
+            value={preferences?.autoUpload ?? appConfig.BackgroundUpload.Enabled}
+            onValueChange={(value) => void onToggleAutoUpload(value)}
+            trackColor={{ true: colors.switchTrackOn, false: colors.switchTrackOff }}
+            thumbColor={colors.switchThumb}
+            accessibilityLabel="Auto-upload"
+          />
+        </View>
+        <View style={[styles.switchRow, { borderBottomColor: colors.border }]}>
+          <View style={styles.switchBody}>
+            <Text style={[styles.switchLabel, { color: colors.text }]}>Backup videos</Text>
+            <Text style={[styles.switchHint, { color: colors.textMuted }]}>
+              Include videos in the automatic upload pass. Manual uploads are unaffected.
+            </Text>
+          </View>
+          <Switch
+            value={preferences?.backupVideos ?? true}
+            onValueChange={(value) => void onToggleBackupVideos(value)}
+            trackColor={{ true: colors.switchTrackOn, false: colors.switchTrackOff }}
+            thumbColor={colors.switchThumb}
+            accessibilityLabel="Backup videos"
+          />
+        </View>
+        <NoteText style={styles.permissionNote}>
+          Wi-Fi-only uploads and thumbnail quality from the design mockups are not part of this
+          build: the app has no network-info module or thumbnail pipeline.
+        </NoteText>
 
         <SectionTitle>Configuration</SectionTitle>
         <SettingsRow label="Identity API" value={identityApiBaseUrl() ?? 'Not configured'} />
@@ -373,6 +541,14 @@ export function SettingsScreen() {
           </ScrollView>
         ) : null}
 
+        <SectionTitle>About</SectionTitle>
+        <SettingsRow label="Application" value="Stash (React Native / Expo)" />
+        <SettingsRow
+          label="Version"
+          value={`${appVersion}${buildVersion ? ` (build ${buildVersion})` : ''}`}
+        />
+        <SettingsRow label="Storage" value={`${appConfig.Storage.Provider} compatible`} />
+
         <NoteText style={styles.footerNote}>
           Configuration comes from src/config/appconfig.json, with secrets supplied via EXPO_PUBLIC_* environment variables (.env).
         </NoteText>
@@ -394,6 +570,51 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginHorizontal: 16,
     marginBottom: 8,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  statCard: {
+    flexGrow: 1,
+    flexBasis: '47%',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  statValue: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 20,
+  },
+  statLabel: {
+    fontFamily: FONT_FAMILY,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    gap: 12,
+  },
+  switchBody: {
+    flex: 1,
+  },
+  switchLabel: {
+    fontFamily: FONT_FAMILY,
+    fontSize: fontSizes.body,
+  },
+  switchHint: {
+    fontFamily: FONT_FAMILY,
+    fontSize: fontSizes.small,
+    marginTop: 2,
   },
   modeRow: {
     flexDirection: 'row',
