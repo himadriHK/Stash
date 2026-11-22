@@ -31,7 +31,8 @@
     "plugins": [
       "expo-sqlite",
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      "expo-background-task"
     ]
   }
 }

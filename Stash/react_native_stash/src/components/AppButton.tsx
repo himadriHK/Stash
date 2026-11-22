@@ -19,7 +19,7 @@ interface AppButtonProps {
  * theme-aware disabled states; the link variant is a transparent background
  * with Primary (light) / White (dark) text.
  */
-export function AppButton({
+export const AppButton = React.memo(function AppButton({
   title,
   onPress,
   disabled = false,
@@ -62,7 +62,7 @@ export function AppButton({
       </Text>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   base: {

@@ -49,14 +49,19 @@ export function BodyText({ children, style, testID, numberOfLines }: TextProps) 
 }
 
 /** Device-ID note: 12px, Gray500 (light) / Gray300 (dark). */
-export function NoteText({ children, style, testID, numberOfLines }: TextProps) {
+export const NoteText = React.memo(function NoteText({
+  children,
+  style,
+  testID,
+  numberOfLines,
+}: TextProps) {
   const { colors } = useTheme();
   return (
     <Text testID={testID} numberOfLines={numberOfLines} style={[styles.small, { color: colors.note }, style]}>
       {children}
     </Text>
   );
-}
+});
 
 /** Error label: default 14px, #B00020. Renders nothing when empty. */
 export function ErrorText({ children, style, testID }: TextProps) {
@@ -72,14 +77,18 @@ export function ErrorText({ children, style, testID }: TextProps) {
 }
 
 /** In-screen section title used by the main tab screens. */
-export function ScreenTitle({ children, style, testID }: TextProps) {
+export const ScreenTitle = React.memo(function ScreenTitle({
+  children,
+  style,
+  testID,
+}: TextProps) {
   const { colors } = useTheme();
   return (
     <Text testID={testID} style={[styles.screenTitle, { color: colors.headline }, style]}>
       {children}
     </Text>
   );
-}
+});
 
 const styles = StyleSheet.create({
   headline: {

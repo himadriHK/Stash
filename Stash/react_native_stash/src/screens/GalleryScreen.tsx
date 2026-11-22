@@ -18,7 +18,9 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
+  type ListRenderItem,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -26,9 +28,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ActionDialog } from '../components/ActionDialog';
 import { EmptyState } from '../components/EmptyState';
 import { MediaTile } from '../components/MediaTile';
+import { SyncBanner } from '../components/SyncBanner';
 import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
-import { useSyncProgress } from '../hooks/useSyncProgress';
 import type { RootStackParamList } from '../navigation/types';
 import { backgroundUploadService, fileRepository } from '../services/singletons';
 import { uploadAndPublishAsync } from '../services/uploadActions';
@@ -45,6 +47,14 @@ type GalleryFilter = 'all' | 'photos' | 'videos' | 'favorites';
 
 const PAGE_SIZE = 60;
 
+/** Columns and tile metrics must match the styles below for `getItemLayout`. */
+const NUM_COLUMNS = 3;
+const GRID_PADDING = 12;
+const TILE_WIDTH_FRACTION = 0.315;
+const TILE_MARGIN_BOTTOM = 10;
+
+const keyExtractor = (item: FileEntity) => item.id;
+
 const FILTERS: { value: GalleryFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'photos', label: 'Photos' },
@@ -57,7 +67,7 @@ export function GalleryScreen() {
   const { status } = useAuth();
   const toast = useToast();
   const navigation = useNavigation<Props>();
-  const { label: syncLabel } = useSyncProgress();
+  const { width: windowWidth } = useWindowDimensions();
 
   const [files, setFiles] = useState<FileEntity[] | null>(null);
   const [summary, setSummary] = useState<FileSummary | null>(null);
@@ -193,6 +203,19 @@ export function GalleryScreen() {
     return list;
   }, [files, filter, searchText, favorites]);
 
+  const tileSize = useMemo(
+    () => Math.max(0, (windowWidth - GRID_PADDING * 2) * TILE_WIDTH_FRACTION),
+    [windowWidth],
+  );
+
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<FileEntity> | null | undefined, index: number) => {
+      const length = tileSize + TILE_MARGIN_BOTTOM;
+      return { length, offset: length * Math.floor(index / NUM_COLUMNS), index };
+    },
+    [tileSize],
+  );
+
   const selectionMode = selection.size > 0;
 
   const toggleSelected = useCallback((id: string) => {
@@ -225,6 +248,27 @@ export function GalleryScreen() {
       toggleSelected(file.id);
     },
     [toggleSelected],
+  );
+
+  /**
+   * Memoized so the FlatList can skip re-rendering its rows when only unrelated
+   * screen state changes (for example the sync banner's progress ticks). It is
+   * recreated when selection or favorites change, which is exactly when the
+   * tiles need to re-read those values.
+   */
+  const renderItem = useCallback<ListRenderItem<FileEntity>>(
+    ({ item }) => (
+      <View style={styles.tileWrap}>
+        <MediaTile
+          file={item}
+          selected={selection.has(item.id)}
+          favorite={isFavorite(favorites, item)}
+          onPress={onTilePress}
+          onLongPress={onTileLongPress}
+        />
+      </View>
+    ),
+    [selection, favorites, onTilePress, onTileLongPress],
   );
 
   const onToggleFavorite = useCallback(
@@ -348,14 +392,7 @@ export function GalleryScreen() {
         </View>
       </View>
 
-      {syncLabel ? (
-        <View style={[styles.syncRow, { backgroundColor: colors.card }]}>
-          <ActivityIndicator size="small" color={colors.primarySolid} />
-          <Text style={[styles.syncLabel, { color: colors.text }]} numberOfLines={1}>
-            {syncLabel}
-          </Text>
-        </View>
-      ) : null}
+      <SyncBanner />
 
       {searchVisible ? (
         <TextInput
@@ -427,21 +464,15 @@ export function GalleryScreen() {
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(item) => item.id}
-          numColumns={3}
-          renderItem={({ item }) => (
-            <View style={styles.tileWrap}>
-              <MediaTile
-                file={item}
-                selected={selection.has(item.id)}
-                favorite={isFavorite(favorites, item)}
-                onPress={() => onTilePress(item)}
-                onLongPress={() => onTileLongPress(item)}
-              />
-            </View>
-          )}
+          keyExtractor={keyExtractor}
+          numColumns={NUM_COLUMNS}
+          renderItem={renderItem}
+          getItemLayout={getItemLayout}
           columnWrapperStyle={styles.gridRow}
           contentContainerStyle={styles.gridContent}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
           onEndReached={() => {
             if (hasMore) {
               void loadPage(false);
@@ -667,23 +698,8 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.small,
   },
   gridContent: {
-    padding: 12,
+    padding: GRID_PADDING,
     paddingBottom: 96,
-  },
-  syncRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginHorizontal: 12,
-    marginTop: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  syncLabel: {
-    flex: 1,
-    fontFamily: FONT_FAMILY,
-    fontSize: fontSizes.small,
   },
   gridRow: {
     justifyContent: 'space-between',

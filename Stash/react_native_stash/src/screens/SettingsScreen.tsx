@@ -50,7 +50,13 @@ const MODES: { value: ThemeMode; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-function SettingsRow({ label, value }: { label: string; value: string }) {
+const SettingsRow = React.memo(function SettingsRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
   const { colors } = useTheme();
   return (
     <View style={[styles.row, { borderBottomColor: colors.border }]}>
@@ -60,14 +66,20 @@ function SettingsRow({ label, value }: { label: string; value: string }) {
       </Text>
     </View>
   );
-}
+});
 
-function SectionTitle({ children }: { children: string }) {
+const SectionTitle = React.memo(function SectionTitle({ children }: { children: string }) {
   const { colors } = useTheme();
   return <Text style={[styles.sectionTitle, { color: colors.headline }]}>{children}</Text>;
-}
+});
 
-function StatCard({ label, value }: { label: string; value: string }) {
+const StatCard = React.memo(function StatCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
   const { colors } = useTheme();
   return (
     <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -75,7 +87,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <Text style={[styles.statLabel, { color: colors.textMuted }]}>{label}</Text>
     </View>
   );
-}
+});
 
 function countFor(entries: StatusCount[], status: string): number {
   return entries.find((entry) => entry.status.toLowerCase() === status.toLowerCase())?.count ?? 0;
@@ -126,6 +138,277 @@ function eventLine(event: RecentFileEvent): string {
   return parts.join('  ');
 }
 
+interface BackupStatusSectionProps {
+  summary: FileSummary | null;
+  syncing: boolean;
+  onSyncNow: () => void;
+}
+
+/**
+ * Split out and memoized so diagnostics/preference/storage updates do not
+ * re-render the backup cards. Re-renders only when the summary or sync state
+ * changes.
+ */
+const BackupStatusSection = React.memo(function BackupStatusSection({
+  summary,
+  syncing,
+  onSyncNow,
+}: BackupStatusSectionProps) {
+  return (
+    <>
+      <SectionTitle>Backup Status</SectionTitle>
+      <View style={styles.statsGrid}>
+        <StatCard label="Total Files" value={summary ? String(summary.totalFiles) : '—'} />
+        <StatCard
+          label="Total Size"
+          value={summary ? formatFileSize(summary.totalBytes) : '—'}
+        />
+        <StatCard
+          label="Pending Upload"
+          value={summary ? String(summary.pendingCount) : '—'}
+        />
+        <StatCard
+          label="Last Sync"
+          value={summary ? formatRelativeTime(summary.lastActivityAt) : '—'}
+        />
+      </View>
+      <SettingsRow
+        label="Storage status"
+        value={
+          appConfig.Storage.S3.Bucket && appConfig.Storage.S3.AccessKeyId
+            ? 'Configured'
+            : 'Not configured'
+        }
+      />
+      <View style={styles.diagnosticsButtons}>
+        <AppButton
+          title={syncing ? 'Syncing…' : 'Sync now'}
+          onPress={onSyncNow}
+          disabled={syncing}
+          testID="SyncNowButton"
+        />
+      </View>
+      <NoteText style={styles.permissionNote}>
+        Runs the same scan, dedup, upload and publish pass as pulling to refresh.
+      </NoteText>
+    </>
+  );
+});
+
+interface PreferencesSectionProps {
+  preferences: UiPreferences | null;
+  onToggleAutoUpload: (enabled: boolean) => void;
+  onToggleBackupVideos: (enabled: boolean) => void;
+}
+
+const PreferencesSection = React.memo(function PreferencesSection({
+  preferences,
+  onToggleAutoUpload,
+  onToggleBackupVideos,
+}: PreferencesSectionProps) {
+  const { colors } = useTheme();
+  return (
+    <>
+      <SectionTitle>Preferences</SectionTitle>
+      <View style={[styles.switchRow, { borderBottomColor: colors.border }]}>
+        <View style={styles.switchBody}>
+          <Text style={[styles.switchLabel, { color: colors.text }]}>Auto-upload</Text>
+          <Text style={[styles.switchHint, { color: colors.textMuted }]}>
+            Automatically back up new files every{' '}
+            {appConfig.BackgroundUpload.IntervalMinutes} minutes while the app is open.
+          </Text>
+        </View>
+        <Switch
+          value={preferences?.autoUpload ?? appConfig.BackgroundUpload.Enabled}
+          onValueChange={onToggleAutoUpload}
+          trackColor={{ true: colors.switchTrackOn, false: colors.switchTrackOff }}
+          thumbColor={colors.switchThumb}
+          accessibilityLabel="Auto-upload"
+        />
+      </View>
+      <View style={[styles.switchRow, { borderBottomColor: colors.border }]}>
+        <View style={styles.switchBody}>
+          <Text style={[styles.switchLabel, { color: colors.text }]}>Backup videos</Text>
+          <Text style={[styles.switchHint, { color: colors.textMuted }]}>
+            Include videos in the automatic upload pass. Manual uploads are unaffected.
+          </Text>
+        </View>
+        <Switch
+          value={preferences?.backupVideos ?? true}
+          onValueChange={onToggleBackupVideos}
+          trackColor={{ true: colors.switchTrackOn, false: colors.switchTrackOff }}
+          thumbColor={colors.switchThumb}
+          accessibilityLabel="Backup videos"
+        />
+      </View>
+      <NoteText style={styles.permissionNote}>
+        Wi-Fi-only uploads and thumbnail quality from the design mockups are not part of this
+        build: the app has no network-info module or thumbnail pipeline.
+      </NoteText>
+    </>
+  );
+});
+
+interface DiagnosticsSectionProps {
+  diagnostics: DiagnosticsSnapshot | null;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}
+
+const DiagnosticsSection = React.memo(function DiagnosticsSection({
+  diagnostics,
+  loading,
+  error,
+  onRefresh,
+}: DiagnosticsSectionProps) {
+  const { colors } = useTheme();
+  return (
+    <>
+      <SectionTitle>Diagnostics</SectionTitle>
+      <SettingsRow
+        label="Files by status"
+        value={diagnostics ? filesSummary(diagnostics) : '—'}
+      />
+      <SettingsRow
+        label="Stuck uploads"
+        value={diagnostics ? String(diagnostics.stuckUploading) : '—'}
+      />
+      <SettingsRow
+        label="Stuck processing"
+        value={diagnostics ? String(diagnostics.stuckProcessing) : '—'}
+      />
+      <SettingsRow label="Outbox" value={diagnostics ? outboxSummary(diagnostics) : '—'} />
+      <SettingsRow
+        label="Hash cache entries"
+        value={diagnostics ? String(diagnostics.hashCacheEntries) : '—'}
+      />
+      <SettingsRow
+        label="Processed responses"
+        value={diagnostics ? String(diagnostics.processedMessages) : '—'}
+      />
+      <SettingsRow
+        label="Last background pass"
+        value={diagnostics ? lastPassSummary(diagnostics) : '—'}
+      />
+      <SettingsRow
+        label="Last outbox flush"
+        value={diagnostics ? lastFlushSummary(diagnostics) : '—'}
+      />
+      <SettingsRow
+        label="Last Kafka response"
+        value={
+          diagnostics
+            ? diagnostics.lastConsumerRecordAt
+              ? formatDate(diagnostics.lastConsumerRecordAt)
+              : 'None'
+            : '—'
+        }
+      />
+      <View style={styles.eventBlock}>
+        <Text style={[styles.rowLabel, { color: colors.textMuted }]}>Recent file events</Text>
+        <Text selectable style={[styles.eventText, { color: colors.text }]}>
+          {diagnostics
+            ? diagnostics.recentEvents.length > 0
+              ? diagnostics.recentEvents.map(eventLine).join('\n')
+              : 'None'
+            : '—'}
+        </Text>
+      </View>
+      <View style={styles.diagnosticsButtons}>
+        <AppButton
+          title={loading ? 'Refreshing…' : 'Refresh diagnostics'}
+          onPress={onRefresh}
+          disabled={loading}
+          testID="RefreshDiagnosticsButton"
+        />
+      </View>
+      {error ? (
+        <NoteText style={[styles.permissionNote, { color: colors.error }]}>
+          {`Diagnostics unavailable: ${error}`}
+        </NoteText>
+      ) : null}
+    </>
+  );
+});
+
+interface StorageSectionProps {
+  storageAccess: StorageAccess | null;
+  errorLog: string | null;
+  onGrantStorage: () => void;
+  onOpenStorageSettings: () => void;
+  onShowErrorLog: () => void;
+  onClearErrorLog: () => void;
+}
+
+const StorageSection = React.memo(function StorageSection({
+  storageAccess,
+  errorLog,
+  onGrantStorage,
+  onOpenStorageSettings,
+  onShowErrorLog,
+  onClearErrorLog,
+}: StorageSectionProps) {
+  const { colors } = useTheme();
+  const logPath = errorLogUri();
+  return (
+    <>
+      <NoteText style={styles.permissionNote}>
+        Storage access below applies to manually entered file paths only. Folders added with the
+        system picker use per-folder grants and do not need these broad permissions.
+      </NoteText>
+      <SettingsRow
+        label="Legacy path storage access"
+        value={storageAccess?.summary ?? 'Checking…'}
+      />
+      {storageAccess &&
+      storageAccess.state !== 'granted' &&
+      storageAccess.state !== 'unsupported' ? (
+        <>
+          <View style={styles.diagnosticsButtons}>
+            <AppButton
+              title="Grant legacy path access"
+              onPress={onGrantStorage}
+              testID="GrantStorageAccessButton"
+            />
+            <AppButton
+              title="Open permission settings"
+              variant="link"
+              onPress={onOpenStorageSettings}
+              testID="OpenStorageSettingsButton"
+            />
+          </View>
+          <NoteText style={styles.permissionNote}>{storageAccess.detail}</NoteText>
+        </>
+      ) : null}
+      <SettingsRow label="Error log file" value={logPath ?? 'Not available on this platform'} />
+      <View style={styles.diagnosticsButtons}>
+        <AppButton
+          title={errorLog === null ? 'Show error log' : 'Hide error log'}
+          onPress={onShowErrorLog}
+          testID="ShowErrorLogButton"
+        />
+        <AppButton
+          title="Clear error log"
+          variant="link"
+          onPress={onClearErrorLog}
+          testID="ClearErrorLogButton"
+        />
+      </View>
+      {errorLog !== null ? (
+        <ScrollView
+          style={[styles.logBox, { borderColor: colors.border, backgroundColor: colors.card }]}
+          nestedScrollEnabled
+        >
+          <Text selectable style={[styles.logText, { color: colors.text }]}>
+            {errorLog.trim().length > 0 ? errorLog : 'No errors logged yet.'}
+          </Text>
+        </ScrollView>
+      ) : null}
+    </>
+  );
+});
+
 export function SettingsScreen() {
   const { colors, mode, setMode } = useTheme();
   const { userId, deviceId, logout } = useAuth();
@@ -138,7 +421,6 @@ export function SettingsScreen() {
   const [summary, setSummary] = useState<FileSummary | null>(null);
   const [preferences, setPreferences] = useState<UiPreferences | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const logPath = errorLogUri();
   const appVersion = Application.nativeApplicationVersion ?? '1.0.0';
   const buildVersion = Application.nativeBuildVersion;
 
@@ -318,78 +600,13 @@ export function SettingsScreen() {
           <AppButton title="Log out" onPress={() => void onLogout()} testID="LogoutButton" />
         </View>
 
-        <SectionTitle>Backup Status</SectionTitle>
-        <View style={styles.statsGrid}>
-          <StatCard label="Total Files" value={summary ? String(summary.totalFiles) : '—'} />
-          <StatCard
-            label="Total Size"
-            value={summary ? formatFileSize(summary.totalBytes) : '—'}
-          />
-          <StatCard
-            label="Pending Upload"
-            value={summary ? String(summary.pendingCount) : '—'}
-          />
-          <StatCard
-            label="Last Sync"
-            value={summary ? formatRelativeTime(summary.lastActivityAt) : '—'}
-          />
-        </View>
-        <SettingsRow
-          label="Storage status"
-          value={
-            appConfig.Storage.S3.Bucket && appConfig.Storage.S3.AccessKeyId
-              ? 'Configured'
-              : 'Not configured'
-          }
-        />
-        <View style={styles.diagnosticsButtons}>
-          <AppButton
-            title={syncing ? 'Syncing…' : 'Sync now'}
-            onPress={() => void onSyncNow()}
-            disabled={syncing}
-            testID="SyncNowButton"
-          />
-        </View>
-        <NoteText style={styles.permissionNote}>
-          Runs the same scan, dedup, upload and publish pass as pulling to refresh.
-        </NoteText>
+        <BackupStatusSection summary={summary} syncing={syncing} onSyncNow={onSyncNow} />
 
-        <SectionTitle>Preferences</SectionTitle>
-        <View style={[styles.switchRow, { borderBottomColor: colors.border }]}>
-          <View style={styles.switchBody}>
-            <Text style={[styles.switchLabel, { color: colors.text }]}>Auto-upload</Text>
-            <Text style={[styles.switchHint, { color: colors.textMuted }]}>
-              Automatically back up new files every{' '}
-              {appConfig.BackgroundUpload.IntervalMinutes} minutes while the app is open.
-            </Text>
-          </View>
-          <Switch
-            value={preferences?.autoUpload ?? appConfig.BackgroundUpload.Enabled}
-            onValueChange={(value) => void onToggleAutoUpload(value)}
-            trackColor={{ true: colors.switchTrackOn, false: colors.switchTrackOff }}
-            thumbColor={colors.switchThumb}
-            accessibilityLabel="Auto-upload"
-          />
-        </View>
-        <View style={[styles.switchRow, { borderBottomColor: colors.border }]}>
-          <View style={styles.switchBody}>
-            <Text style={[styles.switchLabel, { color: colors.text }]}>Backup videos</Text>
-            <Text style={[styles.switchHint, { color: colors.textMuted }]}>
-              Include videos in the automatic upload pass. Manual uploads are unaffected.
-            </Text>
-          </View>
-          <Switch
-            value={preferences?.backupVideos ?? true}
-            onValueChange={(value) => void onToggleBackupVideos(value)}
-            trackColor={{ true: colors.switchTrackOn, false: colors.switchTrackOff }}
-            thumbColor={colors.switchThumb}
-            accessibilityLabel="Backup videos"
-          />
-        </View>
-        <NoteText style={styles.permissionNote}>
-          Wi-Fi-only uploads and thumbnail quality from the design mockups are not part of this
-          build: the app has no network-info module or thumbnail pipeline.
-        </NoteText>
+        <PreferencesSection
+          preferences={preferences}
+          onToggleAutoUpload={onToggleAutoUpload}
+          onToggleBackupVideos={onToggleBackupVideos}
+        />
 
         <SectionTitle>Configuration</SectionTitle>
         <SettingsRow label="Identity API" value={identityApiBaseUrl() ?? 'Not configured'} />
@@ -427,119 +644,21 @@ export function SettingsScreen() {
         <SettingsRow label="Upload response topic" value={appConfig.Kafka.TopicUploadResponse} />
         <SettingsRow label="Dead letter topic" value={appConfig.Kafka.TopicDeadLetter} />
 
-        <SectionTitle>Diagnostics</SectionTitle>
-        <SettingsRow
-          label="Files by status"
-          value={diagnostics ? filesSummary(diagnostics) : '—'}
+        <DiagnosticsSection
+          diagnostics={diagnostics}
+          loading={diagnosticsLoading}
+          error={diagnosticsError}
+          onRefresh={refreshDiagnostics}
         />
-        <SettingsRow
-          label="Stuck uploads"
-          value={diagnostics ? String(diagnostics.stuckUploading) : '—'}
+
+        <StorageSection
+          storageAccess={storageAccess}
+          errorLog={errorLog}
+          onGrantStorage={onGrantStorage}
+          onOpenStorageSettings={openStorageSettingsAsync}
+          onShowErrorLog={onShowErrorLog}
+          onClearErrorLog={onClearErrorLog}
         />
-        <SettingsRow
-          label="Stuck processing"
-          value={diagnostics ? String(diagnostics.stuckProcessing) : '—'}
-        />
-        <SettingsRow label="Outbox" value={diagnostics ? outboxSummary(diagnostics) : '—'} />
-        <SettingsRow
-          label="Hash cache entries"
-          value={diagnostics ? String(diagnostics.hashCacheEntries) : '—'}
-        />
-        <SettingsRow
-          label="Processed responses"
-          value={diagnostics ? String(diagnostics.processedMessages) : '—'}
-        />
-        <SettingsRow
-          label="Last background pass"
-          value={diagnostics ? lastPassSummary(diagnostics) : '—'}
-        />
-        <SettingsRow
-          label="Last outbox flush"
-          value={diagnostics ? lastFlushSummary(diagnostics) : '—'}
-        />
-        <SettingsRow
-          label="Last Kafka response"
-          value={
-            diagnostics
-              ? diagnostics.lastConsumerRecordAt
-                ? formatDate(diagnostics.lastConsumerRecordAt)
-                : 'None'
-              : '—'
-          }
-        />
-        <View style={styles.eventBlock}>
-          <Text style={[styles.rowLabel, { color: colors.textMuted }]}>Recent file events</Text>
-          <Text selectable style={[styles.eventText, { color: colors.text }]}>
-            {diagnostics
-              ? diagnostics.recentEvents.length > 0
-                ? diagnostics.recentEvents.map(eventLine).join('\n')
-                : 'None'
-              : '—'}
-          </Text>
-        </View>
-        <View style={styles.diagnosticsButtons}>
-          <AppButton
-            title={diagnosticsLoading ? 'Refreshing…' : 'Refresh diagnostics'}
-            onPress={() => void refreshDiagnostics()}
-            disabled={diagnosticsLoading}
-            testID="RefreshDiagnosticsButton"
-          />
-        </View>
-        {diagnosticsError ? (
-          <NoteText style={[styles.permissionNote, { color: colors.error }]}>
-            {`Diagnostics unavailable: ${diagnosticsError}`}
-          </NoteText>
-        ) : null}
-        <NoteText style={styles.permissionNote}>
-          Storage access below applies to manually entered file paths only. Folders added with the
-          system picker use per-folder grants and do not need these broad permissions.
-        </NoteText>
-        <SettingsRow
-          label="Legacy path storage access"
-          value={storageAccess?.summary ?? 'Checking…'}
-        />
-        {storageAccess && storageAccess.state !== 'granted' && storageAccess.state !== 'unsupported' ? (
-          <>
-            <View style={styles.diagnosticsButtons}>
-              <AppButton
-                title="Grant legacy path access"
-                onPress={() => void onGrantStorage()}
-                testID="GrantStorageAccessButton"
-              />
-              <AppButton
-                title="Open permission settings"
-                variant="link"
-                onPress={() => void openStorageSettingsAsync()}
-                testID="OpenStorageSettingsButton"
-              />
-            </View>
-            <NoteText style={styles.permissionNote}>{storageAccess.detail}</NoteText>
-          </>
-        ) : null}
-        <SettingsRow label="Error log file" value={logPath ?? 'Not available on this platform'} />
-        <View style={styles.diagnosticsButtons}>
-          <AppButton
-            title={errorLog === null ? 'Show error log' : 'Hide error log'}
-            onPress={() => void onShowErrorLog()}
-            testID="ShowErrorLogButton"
-          />
-          <AppButton
-            title="Clear error log"
-            variant="link"
-            onPress={() => void onClearErrorLog()}
-            testID="ClearErrorLogButton"
-          />
-        </View>
-        {errorLog !== null ? (
-          <ScrollView
-            style={[styles.logBox, { borderColor: colors.border, backgroundColor: colors.card }]}
-            nestedScrollEnabled
-          >
-            <Text selectable style={[styles.logText, { color: colors.text }]}>
-              {errorLog.trim().length > 0 ? errorLog : 'No errors logged yet.'}
-            </Text>
-          </ScrollView>
-        ) : null}
 
         <SectionTitle>About</SectionTitle>
         <SettingsRow label="Application" value="Stash (React Native / Expo)" />

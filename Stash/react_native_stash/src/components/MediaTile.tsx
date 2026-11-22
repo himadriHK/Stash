@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { FileEntity } from '../models/fileEntity';
@@ -14,8 +14,8 @@ interface MediaTileProps {
   file: FileEntity;
   selected: boolean;
   favorite: boolean;
-  onPress: () => void;
-  onLongPress: () => void;
+  onPress: (file: FileEntity) => void;
+  onLongPress: (file: FileEntity) => void;
 }
 
 function shortStatusLabel(status: UploadStatus): string {
@@ -48,88 +48,109 @@ function thumbnailUri(file: FileEntity): string | null {
 /**
  * Square Gallery tile from mockup 9.2: cover thumbnail (or icon fallback),
  * video play overlay, per-status badge, selection check and favorite marker.
+ *
+ * Memoized with a field-level comparator: the Gallery reloads its page after a
+ * sync pass, which produces new `FileEntity` objects (and new `thumbnails`
+ * objects) even when the visible fields are unchanged. Comparing by identity
+ * would re-render every tile on each reload; comparing the fields the tile
+ * actually renders keeps the grid stable while sync runs.
  */
-export function MediaTile({ file, selected, favorite, onPress, onLongPress }: MediaTileProps) {
-  const { colors } = useTheme();
-  const [failed, setFailed] = useState(false);
-  const [uri, setUri] = useState<string | null>(() => thumbnailUri(file));
+export const MediaTile = React.memo(
+  function MediaTile({ file, selected, favorite, onPress, onLongPress }: MediaTileProps) {
+    const { colors } = useTheme();
+    // Track the failure per resolved URI so a re-discovered path (or a new
+    // thumbnail) is retried automatically without an effect.
+    const [failedUri, setFailedUri] = useState<string | null>(null);
+    const uri = thumbnailUri(file);
 
-  // The local path can change when a scan re-discovers the same content.
-  useEffect(() => {
-    setUri(thumbnailUri(file));
-    setFailed(false);
-  }, [file.filePath, file.thumbnails]);
+    const isVideo = file.mimeType.toLowerCase().startsWith('video/');
+    const showImage = uri !== null && failedUri !== uri;
+    const statusColor = uploadStatusColor(file.status);
 
-  const isVideo = file.mimeType.toLowerCase().startsWith('video/');
-  const showImage = uri !== null && !failed;
-  const statusColor = uploadStatusColor(file.status);
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${file.fileName}, ${shortStatusLabel(file.status)}${
-        favorite ? ', favorite' : ''
-      }`}
-      accessibilityState={{ selected }}
-      accessibilityHint="Tap for actions, long press to select"
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={300}
-      style={({ pressed }) => [
-        styles.tile,
-        { backgroundColor: colors.card, borderColor: selected ? colors.primarySolid : colors.border },
-        selected ? styles.selected : null,
-        pressed ? styles.pressed : null,
-      ]}
-    >
-      {showImage ? (
-        <Image
-          source={{ uri: uri }}
-          style={styles.thumbnail}
-          resizeMode="cover"
-          onError={() => setFailed(true)}
-          accessibilityIgnoresInvertColors
-        />
-      ) : (
-        <View style={[styles.fallback, { backgroundColor: colors.secondarySurface }]}>
-          <Ionicons
-            name={
-              uploadStatusIcon(file.status) as React.ComponentProps<typeof Ionicons>['name']
-            }
-            size={28}
-            color={colors.textMuted}
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${file.fileName}, ${shortStatusLabel(file.status)}${
+          favorite ? ', favorite' : ''
+        }`}
+        accessibilityState={{ selected }}
+        accessibilityHint="Tap for actions, long press to select"
+        onPress={() => onPress(file)}
+        onLongPress={() => onLongPress(file)}
+        delayLongPress={300}
+        style={({ pressed }) => [
+          styles.tile,
+          {
+            backgroundColor: colors.card,
+            borderColor: selected ? colors.primarySolid : colors.border,
+          },
+          selected ? styles.selected : null,
+          pressed ? styles.pressed : null,
+        ]}
+      >
+        {showImage ? (
+          <Image
+            source={{ uri: uri }}
+            style={styles.thumbnail}
+            resizeMode="cover"
+            onError={() => setFailedUri(uri)}
+            accessibilityIgnoresInvertColors
           />
-        </View>
-      )}
-
-      {isVideo ? (
-        <View style={styles.videoOverlay} pointerEvents="none">
-          <View style={styles.playCircle}>
-            <Ionicons name="play" size={16} color="#FFFFFF" />
+        ) : (
+          <View style={[styles.fallback, { backgroundColor: colors.secondarySurface }]}>
+            <Ionicons
+              name={
+                uploadStatusIcon(file.status) as React.ComponentProps<typeof Ionicons>['name']
+              }
+              size={28}
+              color={colors.textMuted}
+            />
           </View>
-        </View>
-      ) : null}
+        )}
 
-      {favorite ? (
-        <View style={styles.favoriteMarker} pointerEvents="none">
-          <Ionicons name="heart" size={12} color="#FFFFFF" />
-        </View>
-      ) : null}
+        {isVideo ? (
+          <View style={styles.videoOverlay} pointerEvents="none">
+            <View style={styles.playCircle}>
+              <Ionicons name="play" size={16} color="#FFFFFF" />
+            </View>
+          </View>
+        ) : null}
 
-      <View style={[styles.statusBadge, { backgroundColor: statusColor }]} pointerEvents="none">
-        <Text numberOfLines={1} style={styles.statusLabel}>
-          {shortStatusLabel(file.status)}
-        </Text>
-      </View>
+        {favorite ? (
+          <View style={styles.favoriteMarker} pointerEvents="none">
+            <Ionicons name="heart" size={12} color="#FFFFFF" />
+          </View>
+        ) : null}
 
-      {selected ? (
-        <View style={[styles.check, { backgroundColor: colors.primarySolid }]} pointerEvents="none">
-          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+        <View style={[styles.statusBadge, { backgroundColor: statusColor }]} pointerEvents="none">
+          <Text numberOfLines={1} style={styles.statusLabel}>
+            {shortStatusLabel(file.status)}
+          </Text>
         </View>
-      ) : null}
-    </Pressable>
-  );
-}
+
+        {selected ? (
+          <View
+            style={[styles.check, { backgroundColor: colors.primarySolid }]}
+            pointerEvents="none"
+          >
+            <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          </View>
+        ) : null}
+      </Pressable>
+    );
+  },
+  (prev, next) =>
+    prev.selected === next.selected &&
+    prev.favorite === next.favorite &&
+    prev.onPress === next.onPress &&
+    prev.onLongPress === next.onLongPress &&
+    prev.file.id === next.file.id &&
+    prev.file.status === next.file.status &&
+    prev.file.fileName === next.file.fileName &&
+    prev.file.mimeType === next.file.mimeType &&
+    prev.file.filePath === next.file.filePath &&
+    thumbnailUri(prev.file) === thumbnailUri(next.file),
+);
 
 const styles = StyleSheet.create({
   tile: {

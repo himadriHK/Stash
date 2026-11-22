@@ -51,6 +51,33 @@ export class KafkaConsumer {
     });
   }
 
+  /**
+   * Runs one bounded consume pass for background execution.
+   *
+   * The foreground loop (`start`) owns polling while it is alive, so this is a
+   * no-op then. When the app was launched in the background the loop never
+   * started, so this drains due upload responses within `timeoutMs` and returns
+   * instead of polling forever. Aborting is the normal exit path.
+   */
+  async runOnceAsync(timeoutMs: number = 10_000): Promise<void> {
+    if (this.loopPromise) {
+      return;
+    }
+    const budget =
+      Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.max(1000, timeoutMs) : 10_000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), budget);
+    try {
+      await this.consumeUploadResponsesAsync(controller.signal);
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        throw error;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async stop(): Promise<void> {
     const controller = this.abortController;
     const loop = this.loopPromise;
