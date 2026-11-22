@@ -10,6 +10,7 @@ import type { FileRepository } from '../data/fileRepository';
 import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
+import { mapWithConcurrencyAsync, yieldToEventLoop } from '../utils/cooperative';
 import { localFileExistsAsync, localFileSizeAsync } from '../utils/fileAccess';
 import type { FileLifecycleService } from './fileLifecycleService';
 import type { StorageProvider } from './storage/storageProvider';
@@ -32,6 +33,25 @@ export interface UploadTransferOptions {
   signal?: AbortSignal;
   onProgress?: (bytesSent: number, totalBytes: number) => void;
 }
+
+/** Options for a batch run: bounded parallelism plus coarse progress. */
+export interface UploadBatchOptions {
+  /**
+   * Files in flight at once. Defaults to the batch width, clamped to
+   * `MAX_CONCURRENT_UPLOADS` so a large configured BatchSize cannot start
+   * hundreds of native transfers at the same time.
+   */
+  concurrency?: number;
+  /** Called after each file settles with the running completed/total counts. */
+  onProgress?: (completed: number, total: number) => void;
+}
+
+/**
+ * Hard ceiling on parallel native transfers. Each in-flight upload holds a
+ * native upload task and buffers; the configured BatchSize and the byte budget
+ * decide how many files are grouped, this decides how many may run at once.
+ */
+export const MAX_CONCURRENT_UPLOADS = 10;
 
 export function batchTotals(batch: UploadBatchResult): {
   totalCount: number;
@@ -238,9 +258,15 @@ export class UploadManager {
     }
   }
 
+  /**
+   * Uploads the given files in byte-budgeted batches. Each batch runs through a
+   * bounded worker pool (never one promise per file) and the loop yields between
+   * batches, so a pass over 10k files cannot monopolize the JS thread.
+   */
   async uploadBatchAsync(
     files: FileEntity[],
     options?: UploadTransferOptions,
+    batchOptions?: UploadBatchOptions,
   ): Promise<UploadBatchResult> {
     const pending = [...files];
     if (pending.length === 0) {
@@ -252,6 +278,8 @@ export class UploadManager {
     const results: UploadResult[] = [];
     let batchCount = 0;
     let index = 0;
+    let completed = 0;
+    const total = pending.length;
 
     while (index < pending.length) {
       const batch: FileEntity[] = [];
@@ -281,12 +309,24 @@ export class UploadManager {
       }
 
       batchCount += 1;
-      const batchResults = await Promise.all(
-        batch.map((file) =>
-          this.uploadFileAsync(file, this.buildStorageTempPath(file), options),
-        ),
+      const concurrency = Math.min(
+        batch.length,
+        Math.max(1, Math.floor(batchOptions?.concurrency ?? MAX_CONCURRENT_UPLOADS)),
+      );
+
+      const batchResults = await mapWithConcurrencyAsync(
+        batch,
+        concurrency,
+        (file) => this.uploadFileAsync(file, this.buildStorageTempPath(file), options),
+        () => {
+          completed += 1;
+          batchOptions?.onProgress?.(Math.min(completed, total), total);
+        },
       );
       results.push(...batchResults);
+
+      // Hand the JS thread back to React Native between batches.
+      await yieldToEventLoop();
     }
 
     return { results, batchSize, batchCount };

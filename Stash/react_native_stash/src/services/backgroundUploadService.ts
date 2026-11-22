@@ -4,9 +4,12 @@
  * without warning. Mirrors Stash.Maui/Services/BackgroundUploadService.cs.
  *
  * Pass: stale recovery -> auth check -> flush pending outbox -> scan enabled
- * folders (dedup by content hash) -> lifecycle candidate selection -> batch
+ * folders (dedup by hash) -> lifecycle candidate selection -> batch
  * upload -> durable outbox publish -> final flush; dead-letter files that have
  * exhausted their transfer or host retry budgets.
+ *
+ * The pass is chunked end to end and reports progress: scanning 10k files, or
+ * checking 10k candidate rows, must never run as one long task on the JS thread.
  */
 import {
   ensureValidAccessTokenAsync,
@@ -20,13 +23,19 @@ import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
 import { localFileExistsAsync } from '../utils/fileAccess';
+import {
+  beginSyncProgress,
+  endSyncProgress,
+  recordBackgroundPass,
+  updateSyncProgress,
+} from './runtimeState';
+import { forEachChunkedAsync, mapWithConcurrencyAsync } from '../utils/cooperative';
 import type { FileLifecycleService } from './fileLifecycleService';
 import type { FolderIngestionService } from './folderIngestionService';
 import type { KafkaProducer } from './kafkaProducer';
 import type { OutboxPublisher } from './outboxPublisher';
 import type { UploadManager } from './uploadManager';
 import { getUiPreferencesAsync } from './uiPreferences';
-import { recordBackgroundPass } from './runtimeState';
 
 export interface BackgroundUploadResult {
   alreadyRunning: boolean;
@@ -68,8 +77,20 @@ export interface BackgroundUploadDeps {
   folderIngestion: FolderIngestionService;
 }
 
+/**
+ * Upper bound for candidates when `BackgroundUpload:MaxFilesPerRun` is zero or
+ * negative ("no limit"). Loading an unbounded result set onto a phone would
+ * exhaust memory; later passes pick up where this one stopped.
+ */
+const UNBOUNDED_CANDIDATE_LIMIT = 500;
+/** Candidates whose local presence is probed at the same time. */
+const EXISTENCE_CHECK_CONCURRENCY = 8;
+/** Candidates processed per chunk when probing local files and ownership. */
+const CANDIDATE_CHUNK_SIZE = 250;
+
 export class BackgroundUploadService {
   private runGate = false;
+  private progressActive = false;
 
   constructor(private readonly deps: BackgroundUploadDeps) {}
 
@@ -121,24 +142,34 @@ export class BackgroundUploadService {
         (folder) => folder.isEnabled,
       );
 
-      for (const folder of folders) {
-        try {
-          const result = await this.deps.folderIngestion.ingestFolderAsync(
-            folder,
-            deviceId,
-            userId,
-          );
-          scanned += result.scanned;
-          discovered += result.discovered;
-        } catch (error) {
-          await logError('backgroundUpload.scanFolder', error, { folderPath: folder.folderPath });
+      if (folders.length > 0) {
+        this.ensureProgress('scanning', 0);
+
+        for (const folder of folders) {
+          try {
+            const result = await this.deps.folderIngestion.ingestFolderAsync(
+              folder,
+              deviceId,
+              userId,
+              (progress) => {
+                if (progress.total > 0) {
+                  updateSyncProgress('scanning', progress.processed, progress.total);
+                }
+              },
+            );
+            scanned += result.scanned;
+            discovered += result.discovered;
+          } catch (error) {
+            await logError('backgroundUpload.scanFolder', error, { folderPath: folder.folderPath });
+          }
         }
       }
 
       // Phase 2: lifecycle-owned candidate selection (status, budgets, backoff,
       // and "no active outbox row" are all enforced in one query).
       const configuredMax = appConfig.BackgroundUpload.MaxFilesPerRun;
-      const maxFiles = configuredMax <= 0 ? Number.MAX_SAFE_INTEGER : configuredMax;
+      const maxFiles =
+        configuredMax <= 0 ? UNBOUNDED_CANDIDATE_LIMIT : Math.min(configuredMax, UNBOUNDED_CANDIDATE_LIMIT);
 
       const candidateRows = await this.deps.lifecycle.getCandidatesAsync(
         maxFiles,
@@ -147,18 +178,35 @@ export class BackgroundUploadService {
       );
       const preferences = await getUiPreferencesAsync().catch(() => null);
       const includeVideos = preferences?.backupVideos ?? true;
+
+      if (candidateRows.length > 0) {
+        this.ensureProgress('uploading', candidateRows.length);
+      }
+
+      const videoFree = includeVideos
+        ? candidateRows
+        : candidateRows.filter((file) => !file.mimeType.toLowerCase().startsWith('video/'));
+
+      // Presence checks fan out through a bounded pool; a serial loop over 500
+      // rows is hundreds of bridge round trips with no UI breathing room.
+      const existing = await mapWithConcurrencyAsync(
+        videoFree,
+        EXISTENCE_CHECK_CONCURRENCY,
+        async (file) => ({ file, present: await localFileExistsAsync(file.filePath) }),
+      );
+
       const candidates: FileEntity[] = [];
-      for (const file of candidateRows) {
-        // "Backup videos" off means the automatic pass leaves video rows queued;
-        // a manual retry/upload still processes them.
-        if (!includeVideos && file.mimeType.toLowerCase().startsWith('video/')) {
-          continue;
+      const missing: FileEntity[] = [];
+      for (const entry of existing) {
+        if (entry.present) {
+          candidates.push(entry.file);
+        } else {
+          missing.push(entry.file);
         }
-        if (!(await localFileExistsAsync(file.filePath))) {
-          await this.deps.lifecycle.markLocalMissingAsync(file.id, 'Local file not found.');
-          continue;
-        }
-        candidates.push(file);
+      }
+
+      for (const file of missing) {
+        await this.deps.lifecycle.markLocalMissingAsync(file.id, 'Local file not found.');
       }
 
       if (candidates.length === 0) {
@@ -176,25 +224,35 @@ export class BackgroundUploadService {
         );
       }
 
-      for (const candidate of candidates) {
-        if (!candidate.deviceId || !candidate.userId) {
-          const fileDeviceId = candidate.deviceId || deviceId;
-          const fileUserId = candidate.userId || userId;
-          await this.deps.fileRepository.setOwnershipAsync(
-            candidate.id,
-            fileDeviceId,
-            fileUserId,
-          );
-          candidate.deviceId = fileDeviceId;
-          candidate.userId = fileUserId;
-        }
+      // Ownership is stamped per chunk in one transaction, not one write per row.
+      const missingOwners = candidates
+        .filter((candidate) => !candidate.deviceId || !candidate.userId)
+        .map((candidate) => {
+          candidate.deviceId = candidate.deviceId || deviceId;
+          candidate.userId = candidate.userId || userId;
+          return candidate.id;
+        });
+
+      if (missingOwners.length > 0) {
+        await forEachChunkedAsync(
+          missingOwners,
+          async (chunk) => {
+            await this.deps.fileRepository.setOwnershipManyAsync(chunk, deviceId, userId);
+          },
+          { chunkSize: CANDIDATE_CHUNK_SIZE },
+        );
       }
 
       // Phase 3: batch upload, then queue durable publish intents.
-      const batch = await this.deps.uploadManager.uploadBatchAsync(candidates);
+      const batch = await this.deps.uploadManager.uploadBatchAsync(candidates, undefined, {
+        onProgress: (processed) => updateSyncProgress('uploading', processed, candidates.length),
+      });
+
+      const filesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+      const uploadedFiles: FileEntity[] = [];
 
       for (const uploadResult of batch.results) {
-        const file = candidates.find((candidate) => candidate.id === uploadResult.fileId);
+        const file = filesById.get(uploadResult.fileId);
 
         if (!uploadResult.success) {
           failed += 1;
@@ -224,36 +282,28 @@ export class BackgroundUploadService {
           continue;
         }
 
-        let outcomeQueued = false;
+        uploadedFiles.push(file);
+      }
+
+      if (uploadedFiles.length > 0) {
+        updateSyncProgress('publishing', 0, uploadedFiles.length);
         try {
-          const outcome = await this.deps.outboxPublisher.enqueueAndFlushAsync(
-            file,
+          const publish = await this.deps.outboxPublisher.enqueueManyAsync(
+            uploadedFiles,
             deviceId,
             userId,
+            (processed) => updateSyncProgress('publishing', processed, uploadedFiles.length),
           );
-          outcomeQueued = outcome.queued;
-          if (!outcome.queued) {
-            console.warn(
-              `Publish intent was not queued for file ${file.id}: ${
-                outcome.error ?? 'unknown error'
-              }`,
-            );
+          queued += publish.queued;
+          failed += publish.failed;
+          if (publish.dead > 0) {
+            console.warn(`Outbox dead-lettered ${publish.dead} upload request(s) during the pass.`);
           }
         } catch (error) {
           console.warn(
-            `Could not persist the publish intent for file ${file.id}: ${messageOf(error)}`,
+            `Could not persist publish intents for ${uploadedFiles.length} file(s): ${messageOf(error)}`,
           );
-        }
-
-        if (outcomeQueued) {
-          queued += 1;
-          continue;
-        }
-
-        failed += 1;
-        const fresh = await this.deps.fileRepository.getByIdAsync(file.id);
-        if (fresh) {
-          await this.maybeProduceDeadLetterAsync(fresh, maxRetries, maxHostRetries);
+          failed += uploadedFiles.length;
         }
       }
 
@@ -299,7 +349,24 @@ export class BackgroundUploadService {
   /** Records the pass outcome for diagnostics, then returns it unchanged. */
   private finish(result: BackgroundUploadResult): BackgroundUploadResult {
     recordBackgroundPass(result);
+    if (this.progressActive) {
+      this.progressActive = false;
+      endSyncProgress();
+    }
     return result;
+  }
+
+  /**
+   * Starts the progress banner on the first phase that has work, or moves an
+   * already-running banner to the next phase.
+   */
+  private ensureProgress(phase: 'scanning' | 'uploading', total: number): void {
+    if (this.progressActive) {
+      updateSyncProgress(phase, 0, total);
+      return;
+    }
+    beginSyncProgress(phase, total);
+    this.progressActive = true;
   }
 
   private async flushOutboxAsync(): Promise<void> {

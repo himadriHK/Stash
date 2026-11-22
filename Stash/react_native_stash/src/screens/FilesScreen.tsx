@@ -5,6 +5,7 @@ import {
   Pressable,
   RefreshControl,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +16,7 @@ import { EmptyState } from '../components/EmptyState';
 import { FileCard } from '../components/FileCard';
 import { ScreenTitle } from '../components/FormText';
 import { useToast } from '../components/ToastContext';
+import { useSyncProgress } from '../hooks/useSyncProgress';
 import { useAuth } from '../auth/AuthContext';
 import type { RootStackParamList } from '../navigation/types';
 import { fileRepository, backgroundUploadService } from '../services/singletons';
@@ -22,6 +24,7 @@ import { uploadAndPublishAsync } from '../services/uploadActions';
 import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus, uploadStatusDisplayName } from '../models/uploadStatus';
 import { useTheme } from '../theme/ThemeContext';
+import { FONT_FAMILY, fontSizes } from '../theme/typography';
 import { formatFileSize, formatDate } from '../utils/format';
 
 type Props = NativeStackNavigationProp<RootStackParamList>;
@@ -38,6 +41,7 @@ export function FilesScreen() {
   const { status } = useAuth();
   const toast = useToast();
   const navigation = useNavigation<Props>();
+  const { label: syncLabel } = useSyncProgress();
 
   const [files, setFiles] = useState<FileEntity[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -50,6 +54,7 @@ export function FilesScreen() {
   const filesRef = useRef<FileEntity[] | null>(null);
   const loadingMoreRef = useRef(false);
   const hasMoreRef = useRef(true);
+  const passRef = useRef(false);
 
   /**
    * Loads one page. `reset` restarts at offset 0 (focus, refresh, retry);
@@ -100,25 +105,40 @@ export function FilesScreen() {
     }, [loadPage]),
   );
 
+  /**
+   * Pull-to-refresh reloads the list, then kicks off the upload pass without
+   * waiting for it. The pass can take minutes on a large library; awaiting it
+   * here would freeze the refresh gesture while the JS thread is busy, so the
+   * pass reports progress through the sync banner instead.
+   */
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      if (status === 'authenticated') {
-        const result = await backgroundUploadService.runOnceAsync();
-        if (result.success) {
-          toast.show(
-            `Upload pass: ${result.scanned} scanned, ${result.discovered} new, ` +
-              `${result.uploaded} uploaded, ${result.queued} queued`,
-          );
-        } else {
-          toast.show(result.error ?? 'Background upload pass failed.', { color: colors.error });
-        }
+      await loadPage(true);
+    } finally {
+      setRefreshing(false);
+    }
+
+    if (status !== 'authenticated' || passRef.current) {
+      return;
+    }
+
+    passRef.current = true;
+    try {
+      const result = await backgroundUploadService.runOnceAsync();
+      if (result.success) {
+        toast.show(
+          `Upload pass: ${result.scanned} scanned, ${result.discovered} new, ` +
+            `${result.uploaded} uploaded, ${result.queued} queued`,
+        );
+      } else if (!result.alreadyRunning) {
+        toast.show(result.error ?? 'Background upload pass failed.', { color: colors.error });
       }
     } catch (error) {
       toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
     } finally {
+      passRef.current = false;
       await loadPage(true);
-      setRefreshing(false);
     }
   }, [status, toast, colors.error, loadPage]);
 
@@ -157,6 +177,15 @@ export function FilesScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScreenTitle>Files</ScreenTitle>
+
+      {syncLabel ? (
+        <View style={[styles.syncRow, { backgroundColor: colors.card }]}>
+          <ActivityIndicator size="small" color={colors.primarySolid} />
+          <Text style={[styles.syncLabel, { color: colors.text }]} numberOfLines={1}>
+            {syncLabel}
+          </Text>
+        </View>
+      ) : null}
 
       {files === null ? (
         <EmptyState icon="document-text-outline" title="Loading…" subtitle="" />
@@ -256,6 +285,21 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingVertical: 16,
+  },
+  syncRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  syncLabel: {
+    flex: 1,
+    fontFamily: FONT_FAMILY,
+    fontSize: fontSizes.small,
   },
   fab: {
     position: 'absolute',

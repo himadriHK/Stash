@@ -3,10 +3,9 @@
  * hash + dedup into SQLite, then batch upload to S3 and publish Kafka upload
  * requests. Mirrors the documented manual-upload workflow.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import { AppButton } from '../components/AppButton';
 import { EmptyState } from '../components/EmptyState';
@@ -16,13 +15,13 @@ import { useAuth } from '../auth/AuthContext';
 import { appConfig } from '../config/appConfig';
 import { fileRepository, folderScanner } from '../services/singletons';
 import { uploadBatchAndPublishAsync } from '../services/uploadActions';
-import { createFileEntity } from '../models/fileEntity';
+import { createFileEntity, type FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
 import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes } from '../theme/typography';
 import { formatBytesAsMb, formatFileSize } from '../utils/format';
 import { mimeTypeForFile } from '../services/folderScannerService';
-import { shouldYield, yieldToEventLoop } from '../utils/cooperative';
+import { forEachChunkedAsync } from '../utils/cooperative';
 
 interface PickedFile {
   uri: string;
@@ -31,6 +30,24 @@ interface PickedFile {
 }
 
 const PICKER_TYPES = ['image/*', 'video/*'];
+/** Files hashed per scheduling slice. */
+const UPLOAD_HASH_CHUNK_SIZE = 10;
+/** Rows inserted per transaction (29 bound parameters per row). */
+const FILE_INSERT_BATCH_SIZE = 25;
+/** Minimum gap between progress label updates. */
+const PROGRESS_INTERVAL_MS = 200;
+
+/** Friendly label for a batch pipeline phase. */
+function batchPhaseLabel(phase: 'ownership' | 'uploading' | 'publishing'): string {
+  switch (phase) {
+    case 'ownership':
+      return 'Preparing';
+    case 'publishing':
+      return 'Queuing';
+    default:
+      return 'Uploading';
+  }
+}
 
 export function UploadScreen() {
   const { colors } = useTheme();
@@ -38,6 +55,7 @@ export function UploadScreen() {
   const toast = useToast();
   const [picked, setPicked] = useState<PickedFile[]>([]);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
 
   const maxFileSize = appConfig.UploadSettings.MaxFileSizeBytes;
 
@@ -68,6 +86,21 @@ export function UploadScreen() {
     }
   }, [busy, toast, colors.error]);
 
+  const lastProgressAtRef = useRef(0);
+
+  /**
+   * Progress updates arrive once per file; throttle them so a 10k-file run does
+   * not trigger a React render per file.
+   */
+  const reportProgress = useCallback((text: string) => {
+    const now = Date.now();
+    if (now - lastProgressAtRef.current < PROGRESS_INTERVAL_MS) {
+      return;
+    }
+    lastProgressAtRef.current = now;
+    setProgress(text);
+  }, []);
+
   const uploadPicked = useCallback(async () => {
     if (busy || picked.length === 0) {
       return;
@@ -77,42 +110,72 @@ export function UploadScreen() {
       return;
     }
     setBusy(true);
+    lastProgressAtRef.current = 0;
+    setProgress(`Hashing 0/${picked.length}`);
     let skipped = 0;
     try {
-      const entities = [];
+      // Deduplication reads one snapshot of tracked hashes instead of one
+      // query per picked file, then inserts in transactional batches.
+      const knownHashes = await fileRepository.getAllContentHashesAsync();
+      const entities: FileEntity[] = [];
       let hashFailed = 0;
-      let processed = 0;
-      for (const file of picked) {
-        processed += 1;
-        if (shouldYield(processed)) {
-          await yieldToEventLoop();
-        }
-        const hash = await folderScanner.computeFileHashAsync(file.uri, file.size);
-        if (!hash) {
-          hashFailed += 1;
-          continue;
-        }
-        if (await fileRepository.existsByContentHashAsync(hash)) {
-          skipped += 1;
-          continue;
-        }
-        const entity = createFileEntity({
-          fileName: file.name,
-          filePath: file.uri,
-          fileSize: file.size,
-          contentHash: hash,
-          mimeType: mimeTypeForFile(file.name),
-          status: UploadStatus.Pending,
-        });
-        await fileRepository.addAsync(entity);
-        entities.push(entity);
+
+      await forEachChunkedAsync(
+        picked,
+        async (chunk) => {
+          for (const file of chunk) {
+            const hash = await folderScanner.computeFileHashAsync(file.uri, file.size);
+            if (!hash) {
+              hashFailed += 1;
+              continue;
+            }
+            const normalized = hash.toLowerCase();
+            if (knownHashes.has(normalized)) {
+              skipped += 1;
+              continue;
+            }
+            knownHashes.add(normalized);
+            entities.push(
+              createFileEntity({
+                fileName: file.name,
+                filePath: file.uri,
+                fileSize: file.size,
+                contentHash: hash,
+                mimeType: mimeTypeForFile(file.name),
+                status: UploadStatus.Pending,
+              }),
+            );
+          }
+        },
+        {
+          chunkSize: UPLOAD_HASH_CHUNK_SIZE,
+          onProgress: (processed, total) => reportProgress(`Hashing ${processed}/${total}`),
+        },
+      );
+
+      if (entities.length > 0) {
+        setProgress(`Saving 0/${entities.length}`);
+        await forEachChunkedAsync(
+          entities,
+          async (chunk) => {
+            await fileRepository.addManyAsync(chunk);
+          },
+          {
+            chunkSize: FILE_INSERT_BATCH_SIZE,
+            onProgress: (processed, total) => reportProgress(`Saving ${processed}/${total}`),
+          },
+        );
       }
 
       let uploaded = 0;
       let queued = 0;
       let failed = hashFailed;
       if (entities.length > 0) {
-        const outcome = await uploadBatchAndPublishAsync(entities);
+        const outcome = await uploadBatchAndPublishAsync(entities, (update) => {
+          reportProgress(
+            `${batchPhaseLabel(update.phase)} ${update.processed}/${update.total}`,
+          );
+        });
         uploaded = outcome.uploaded;
         queued = outcome.queued;
         failed += outcome.failed;
@@ -127,14 +190,10 @@ export function UploadScreen() {
     } catch (error) {
       toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
     } finally {
+      setProgress(null);
       setBusy(false);
     }
-  }, [busy, picked, status, toast, colors.error]);
-
-  // Clear stale selections when leaving the screen? Keep them; they remain
-  // valid cache URIs for this session.
-
-  const oversizeCount = picked.filter((file) => file.size > maxFileSize).length;
+  }, [busy, picked, status, toast, colors.error, reportProgress]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -209,6 +268,10 @@ export function UploadScreen() {
           <ActivityIndicator color={colors.indicator} style={styles.indicator} />
         ) : null}
 
+        {busy && progress ? (
+          <NoteText style={[styles.progressNote, { color: colors.textMuted }]}>{progress}</NoteText>
+        ) : null}
+
         <NoteText style={styles.limitNote}>
           Maximum file size {formatBytesAsMb(maxFileSize)}. Files are hashed locally and
           deduplicated before upload; duplicates are skipped.
@@ -258,6 +321,11 @@ const styles = StyleSheet.create({
   },
   indicator: {
     marginTop: 16,
+  },
+  progressNote: {
+    marginTop: 8,
+    marginHorizontal: 16,
+    textAlign: 'center',
   },
   limitNote: {
     marginTop: 16,

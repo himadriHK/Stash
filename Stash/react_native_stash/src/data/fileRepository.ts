@@ -243,6 +243,23 @@ export class FileRepository {
     return row !== null;
   }
 
+  /**
+   * Every tracked content hash in one query. Ingestion checks each scanned file
+   * for an existing record, so a per-file `EXISTS` would be one bridge round trip
+   * per file; callers preload this set once per pass instead.
+   */
+  async getAllContentHashesAsync(): Promise<Set<string>> {
+    const db = await this.open();
+    const rows = await db.getAllAsync<{ content_hash: string }>(
+      'SELECT content_hash FROM files',
+    );
+    const hashes = new Set<string>();
+    for (const row of rows) {
+      hashes.add(row.content_hash.toLowerCase());
+    }
+    return hashes;
+  }
+
   async getCandidatesAsync(
     limit: number,
     maxRetries: number,
@@ -296,7 +313,7 @@ export class FileRepository {
    * duplicates (for example a content hash inserted by a concurrent writer) and
    * the return value is the number of rows actually inserted.
    */
-  async addManyAsync(files: FileEntity[]): Promise<number> {
+  async addManyAsync(files: readonly FileEntity[]): Promise<number> {
     if (files.length === 0) {
       return 0;
     }
@@ -353,6 +370,33 @@ export class FileRepository {
       `UPDATE files SET device_id = ?, user_id = ?, updated_at = ? WHERE id = ?`,
       [deviceId, userId, new Date().toISOString(), id],
     );
+  }
+
+  /**
+   * Stamps ownership for several rows in one transaction. A pass that discovers
+   * 10k rows without an owner would otherwise issue 10k separate writes.
+   */
+  async setOwnershipManyAsync(
+    ids: readonly string[],
+    deviceId: string,
+    userId: string,
+  ): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const db = await this.open();
+    const updatedAt = new Date().toISOString();
+    let changed = 0;
+    await runTransactionAsync(db, async () => {
+      for (const id of ids) {
+        const result = await db.runAsync(
+          `UPDATE files SET device_id = ?, user_id = ?, updated_at = ? WHERE id = ?`,
+          [deviceId, userId, updatedAt, id],
+        );
+        changed += result.changes;
+      }
+    });
+    return changed;
   }
 
   async deleteAsync(id: string): Promise<void> {

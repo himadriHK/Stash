@@ -4,7 +4,15 @@
  * documented Folders behaviour of Stash.Maui.
  */
 import React, { useCallback, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { AddFolderDialog } from '../components/AddFolderDialog';
@@ -16,8 +24,10 @@ import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
 import { createFolderConfig, type FolderConfig } from '../models/folderConfig';
 import { folderRepository } from '../services/singletons';
+import type { FolderIngestionProgress } from '../services/folderIngestionService';
 import { scanFolderAsync } from '../services/uploadActions';
 import { useTheme } from '../theme/ThemeContext';
+import { FONT_FAMILY, fontSizes } from '../theme/typography';
 import { requestStorageAccessAsync } from '../utils/storagePermissions';
 
 interface FolderScanOptions {
@@ -34,6 +44,7 @@ export function FoldersScreen() {
   const [dialogVisible, setDialogVisible] = useState(false);
   const [detailsFolder, setDetailsFolder] = useState<FolderConfig | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scanProgress, setScanProgress] = useState<FolderIngestionProgress | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -111,15 +122,19 @@ export function FoldersScreen() {
         return;
       }
       setBusy(true);
+      setScanProgress({ processed: 0, total: 0 });
       toast.show(`Scanning ${folder.folderName}…`);
       try {
-        const result = await scanFolderAsync(folder);
+        const result = await scanFolderAsync(folder, (progress) =>
+          setScanProgress(progress),
+        );
         toast.show(`Scanned ${result.scanned} files, ${result.discovered} new`);
         await load();
       } catch (error) {
         toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
       } finally {
         setBusy(false);
+        setScanProgress(null);
       }
     },
     [status, busy, toast, colors.error, load],
@@ -161,6 +176,17 @@ export function FoldersScreen() {
           ? 'Folder scanning is not available in the browser. Use Upload → Pick Files.'
           : 'Folders are added with the system picker. On iOS, access lasts for the current session and must be re-selected after the app restarts.'}
       </NoteText>
+
+      {scanProgress ? (
+        <View style={[styles.scanRow, { backgroundColor: colors.card }]}>
+          <ActivityIndicator size="small" color={colors.primarySolid} />
+          <Text style={[styles.scanLabel, { color: colors.text }]} numberOfLines={1}>
+            {scanProgress.total > 0
+              ? `Scanning ${scanProgress.processed}/${scanProgress.total}`
+              : 'Scanning…'}
+          </Text>
+        </View>
+      ) : null}
 
       {folders === null ? (
         <EmptyState icon="folder-outline" title="Loading…" subtitle="" />
@@ -222,6 +248,21 @@ const styles = StyleSheet.create({
   folderNote: {
     marginHorizontal: 16,
     marginBottom: 8,
+  },
+  scanRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  scanLabel: {
+    flex: 1,
+    fontFamily: FONT_FAMILY,
+    fontSize: fontSizes.small,
   },
   listContent: {
     paddingBottom: 96,

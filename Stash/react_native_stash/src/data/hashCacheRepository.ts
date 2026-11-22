@@ -5,7 +5,7 @@
  */
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase } from './database';
-import { runWriteAsync } from './transactionQueue';
+import { runTransactionAsync, runWriteAsync } from './transactionQueue';
 
 export interface HashCacheEntry {
   uri: string;
@@ -13,6 +13,31 @@ export interface HashCacheEntry {
   modifiedAt: string;
   contentHash: string;
   updatedAt: string;
+}
+
+export interface HashCacheWrite {
+  uri: string;
+  size: number;
+  modifiedAt: string;
+  contentHash: string;
+}
+
+const HASH_CACHE_UPSERT_SQL = `INSERT INTO file_hash_cache (uri, size, modified_at, content_hash, updated_at)
+  VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(uri) DO UPDATE SET
+    size = excluded.size,
+    modified_at = excluded.modified_at,
+    content_hash = excluded.content_hash,
+    updated_at = excluded.updated_at`;
+
+function hashCacheParams(entry: HashCacheWrite): (string | number)[] {
+  return [
+    entry.uri,
+    entry.size,
+    entry.modifiedAt,
+    entry.contentHash.toLowerCase(),
+    new Date().toISOString(),
+  ];
 }
 
 interface HashCacheRow {
@@ -46,6 +71,19 @@ export class HashCacheRepository {
     return row ? mapRow(row) : null;
   }
 
+  /**
+   * Loads the whole cache in one query. Ingestion works on 10k+ files, so a
+   * per-URI lookup would mean a bridge round trip per file; callers preload this
+   * map once and keep it in memory for the pass.
+   */
+  async getAllAsync(): Promise<HashCacheEntry[]> {
+    const db = await this.open();
+    const rows = await db.getAllAsync<HashCacheRow>(
+      `SELECT uri, size, modified_at, content_hash, updated_at FROM file_hash_cache`,
+    );
+    return rows.map(mapRow);
+  }
+
   async putAsync(entry: {
     uri: string;
     size: number;
@@ -53,17 +91,25 @@ export class HashCacheRepository {
     contentHash: string;
   }): Promise<void> {
     const db = await this.open();
-    await runWriteAsync(
-      db,
-      `INSERT INTO file_hash_cache (uri, size, modified_at, content_hash, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(uri) DO UPDATE SET
-         size = excluded.size,
-         modified_at = excluded.modified_at,
-         content_hash = excluded.content_hash,
-         updated_at = excluded.updated_at`,
-      [entry.uri, entry.size, entry.modifiedAt, entry.contentHash.toLowerCase(), new Date().toISOString()],
-    );
+    await runWriteAsync(db, HASH_CACHE_UPSERT_SQL, hashCacheParams(entry));
+  }
+
+  /** Writes many cache entries in one transaction (one per scanned file). */
+  async putManyAsync(
+    entries: readonly { uri: string; size: number; modifiedAt: string; contentHash: string }[],
+  ): Promise<number> {
+    if (entries.length === 0) {
+      return 0;
+    }
+    const db = await this.open();
+    let written = 0;
+    await runTransactionAsync(db, async () => {
+      for (const entry of entries) {
+        const result = await db.runAsync(HASH_CACHE_UPSERT_SQL, hashCacheParams(entry));
+        written += result.changes;
+      }
+    });
+    return written;
   }
 
   async pruneAsync(olderThanIso: string): Promise<void> {

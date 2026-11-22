@@ -17,8 +17,15 @@ import type { FileLifecycleService } from './fileLifecycleService';
 import type { KafkaProducer } from './kafkaProducer';
 import { computeNextAttemptAt, isAuthError, isRetryableError, nowIso } from './retryPolicy';
 import { recordOutboxFlush } from './runtimeState';
+import { forEachChunkedAsync, yieldToEventLoop } from '../utils/cooperative';
 
 const DEFAULT_FLUSH_LIMIT = 50;
+/** Rows sent per drain round: larger than the single-file flush default. */
+const DRAIN_FLUSH_LIMIT = 100;
+/** Upper bound on drain rounds so a huge backlog cannot loop forever. */
+const DRAIN_MAX_ROUNDS = 200;
+/** Files whose publish intent is persisted per transaction. */
+const ENQUEUE_CHUNK_SIZE = 25;
 const SENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface OutboxFlushResult {
@@ -214,6 +221,98 @@ export class OutboxPublisher {
     } finally {
       this.flushing = false;
     }
+  }
+
+  /**
+   * Persists publish intents for many uploaded files, then drains the outbox.
+   *
+   * A batch pass over 10k files must not run "enqueue + flush" per file: each
+   * flush does recovery, pruning and a network round trip. Enqueuing in chunks
+   * (one transaction per chunk) and flushing afterwards keeps the same durable
+   * guarantee with a fraction of the database work.
+   */
+  async enqueueManyAsync(
+    files: readonly FileEntity[],
+    deviceId: string,
+    userId: string,
+    onProgress?: (processed: number, total: number) => void,
+  ): Promise<{ queued: number; failed: number; sent: number; dead: number }> {
+    const total = files.length;
+    const enqueueable = files.filter(
+      (file) => file.storageTempPath && file.storageTempPath.trim().length > 0,
+    );
+
+    let queued = 0;
+    let failed = total - enqueueable.length;
+
+    await forEachChunkedAsync(
+      enqueueable,
+      async (chunk) => {
+        const params = chunk.map((file) => {
+          const message = createUploadRequestMessage(
+            file,
+            deviceId,
+            userId,
+            appConfig.Storage.Provider,
+          );
+          return {
+            fileId: file.id,
+            correlationId: message.correlationId,
+            messageId: message.messageId,
+            payload: JSON.stringify(message),
+          };
+        });
+
+        try {
+          await this.outbox.enqueueManyAsync(params);
+        } catch (error) {
+          console.warn(
+            `Could not persist publish intents for ${chunk.length} file(s): ${messageOf(error)}`,
+          );
+          failed += chunk.length;
+          return;
+        }
+        // `INSERT OR IGNORE` only skips a row when an active message already
+        // exists for the file, which means the request is still queued - so the
+        // whole chunk counts as queued.
+        queued += chunk.length;
+      },
+      {
+        chunkSize: ENQUEUE_CHUNK_SIZE,
+        onProgress: (processed) => onProgress?.(processed, total),
+      },
+    );
+
+    const flush = await this.drainAsync();
+    return { queued, failed, sent: flush.sent, dead: flush.dead };
+  }
+
+  /**
+   * Flushes repeatedly until the outbox has no due rows left (or the round cap
+   * is reached). Each round sends up to `limit` messages.
+   */
+  async drainAsync(
+    limit: number = DRAIN_FLUSH_LIMIT,
+    maxRounds: number = DRAIN_MAX_ROUNDS,
+  ): Promise<OutboxFlushResult> {
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DEFAULT_FLUSH_LIMIT;
+    const safeRounds =
+      Number.isFinite(maxRounds) && maxRounds > 0 ? Math.floor(maxRounds) : DRAIN_MAX_ROUNDS;
+
+    const totals: OutboxFlushResult = { attempted: 0, sent: 0, retried: 0, dead: 0 };
+    for (let round = 0; round < safeRounds; round += 1) {
+      const result = await this.flushAsync(safeLimit);
+      totals.attempted += result.attempted;
+      totals.sent += result.sent;
+      totals.retried += result.retried;
+      totals.dead += result.dead;
+      // A short round means nothing else is due; a full round means more work.
+      if (result.attempted < safeLimit) {
+        break;
+      }
+      await yieldToEventLoop();
+    }
+    return totals;
   }
 
   private async failTerminallyAsync(

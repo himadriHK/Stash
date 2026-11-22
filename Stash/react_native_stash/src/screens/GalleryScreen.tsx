@@ -28,6 +28,7 @@ import { EmptyState } from '../components/EmptyState';
 import { MediaTile } from '../components/MediaTile';
 import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
+import { useSyncProgress } from '../hooks/useSyncProgress';
 import type { RootStackParamList } from '../navigation/types';
 import { backgroundUploadService, fileRepository } from '../services/singletons';
 import { uploadAndPublishAsync } from '../services/uploadActions';
@@ -56,6 +57,7 @@ export function GalleryScreen() {
   const { status } = useAuth();
   const toast = useToast();
   const navigation = useNavigation<Props>();
+  const { label: syncLabel } = useSyncProgress();
 
   const [files, setFiles] = useState<FileEntity[] | null>(null);
   const [summary, setSummary] = useState<FileSummary | null>(null);
@@ -75,6 +77,7 @@ export function GalleryScreen() {
   const filesRef = useRef<FileEntity[] | null>(null);
   const loadingMoreRef = useRef(false);
   const hasMoreRef = useRef(true);
+  const passRef = useRef(false);
 
   const loadPage = useCallback(async (reset: boolean) => {
     if (!reset && (loadingMoreRef.current || !hasMoreRef.current)) {
@@ -134,24 +137,43 @@ export function GalleryScreen() {
     }, [loadPage, refreshSummary, refreshFavorites]),
   );
 
+  /**
+   * Reloads the grid, then starts the upload pass without awaiting it. The pass
+   * walks every discovered file, so awaiting it inside the refresh gesture would
+   * leave the grid unresponsive for minutes; progress is shown in the sync row.
+   */
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      if (status === 'authenticated') {
-        const result = await backgroundUploadService.runOnceAsync();
-        toast.show(
-          result.success
-            ? `Upload pass: ${result.scanned} scanned, ${result.discovered} new, ${result.uploaded} uploaded`
-            : result.error ?? 'Background upload pass failed.',
-          result.success ? undefined : { color: colors.error },
-        );
+      await loadPage(true);
+      await refreshSummary();
+    } finally {
+      setRefreshing(false);
+    }
+
+    if (status !== 'authenticated' || passRef.current) {
+      return;
+    }
+
+    passRef.current = true;
+    try {
+      const result = await backgroundUploadService.runOnceAsync();
+      if (result.alreadyRunning) {
+        // Another pass (scheduled or started elsewhere) owns the pipeline.
+        return;
       }
+      toast.show(
+        result.success
+          ? `Upload pass: ${result.scanned} scanned, ${result.discovered} new, ${result.uploaded} uploaded`
+          : result.error ?? 'Background upload pass failed.',
+        result.success ? undefined : { color: colors.error },
+      );
     } catch (error) {
       toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
     } finally {
+      passRef.current = false;
       await loadPage(true);
       await refreshSummary();
-      setRefreshing(false);
     }
   }, [status, toast, colors.error, loadPage, refreshSummary]);
 
@@ -325,6 +347,15 @@ export function GalleryScreen() {
           </Pressable>
         </View>
       </View>
+
+      {syncLabel ? (
+        <View style={[styles.syncRow, { backgroundColor: colors.card }]}>
+          <ActivityIndicator size="small" color={colors.primarySolid} />
+          <Text style={[styles.syncLabel, { color: colors.text }]} numberOfLines={1}>
+            {syncLabel}
+          </Text>
+        </View>
+      ) : null}
 
       {searchVisible ? (
         <TextInput
@@ -638,6 +669,21 @@ const styles = StyleSheet.create({
   gridContent: {
     padding: 12,
     paddingBottom: 96,
+  },
+  syncRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 12,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  syncLabel: {
+    flex: 1,
+    fontFamily: FONT_FAMILY,
+    fontSize: fontSizes.small,
   },
   gridRow: {
     justifyContent: 'space-between',

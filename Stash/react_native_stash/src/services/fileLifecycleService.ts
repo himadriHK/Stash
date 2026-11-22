@@ -17,9 +17,12 @@ import {
 } from '../data/processedMessageRepository';
 import type { FileEntity } from '../models/fileEntity';
 import type { UploadResponseMessage } from '../models/messages';
+import { shouldYield, yieldToEventLoop } from '../utils/cooperative';
 import { computeNextAttemptAt, nowIso } from './retryPolicy';
 
 const DEFAULT_STALE_TIMEOUT_MS = 30 * 60 * 1000;
+/** Rows processed between yields while recovering interrupted transfers. */
+const RECOVERY_YIELD_INTERVAL = 50;
 const UPLOAD_INTERRUPTED_MESSAGE = 'Upload interrupted before completion.';
 const HOST_TIMEOUT_MESSAGE = 'Timed out waiting for host response.';
 const HOST_FAILURE_MESSAGE = 'Host processing failed.';
@@ -268,6 +271,11 @@ export class FileLifecycleService {
 
     let recoveredUploads = 0;
     for (const row of uploadRows) {
+      // Startup recovery can walk thousands of interrupted rows; yield so the
+      // first screen stays interactive while the database catches up.
+      if (shouldYield(recoveredUploads + 1, RECOVERY_YIELD_INTERVAL)) {
+        await yieldToEventLoop();
+      }
       const applied = await this.markUploadFailedAsync(row.id, UPLOAD_INTERRUPTED_MESSAGE, {
         incrementRetry: true,
         maxRetries,
@@ -287,6 +295,9 @@ export class FileLifecycleService {
 
     let recoveredProcessing = 0;
     for (const row of processingRows) {
+      if (shouldYield(recoveredProcessing + 1, RECOVERY_YIELD_INTERVAL)) {
+        await yieldToEventLoop();
+      }
       let applied = false;
       await runTransactionAsync(db, async () => {
         const current = await db.getFirstAsync<{ host_retry_count: number }>(
