@@ -5,7 +5,7 @@ A complete guide to installing, configuring and operating the React Native
 palette, OpenSans typography, form/button styling, light + dark appearance —
 and reimplements the documented feature set: Identity API authentication,
 SQLite storage with SHA-256 deduplication, folder scanning, direct S3 upload
-through presigned AWS Signature V4 URLs, Kafka REST messaging and the
+through presigned AWS Signature V4 URLs, Kafka messaging through the Stash proxy and the
 15-minute background upload pass.
 
 > To run the app against the real backend (Identity API, Functions host, MongoDB,
@@ -43,7 +43,7 @@ react_native_stash/
     screens/              Login, Register, Files, Upload, Folders, Settings, About
     services/             scanner, storage provider interface + factory, S3
                           service, pure-JS SigV4 presigner, presigned transfer
-                          adapter, upload manager, Kafka REST producer/consumer,
+                          adapter, upload manager, Kafka proxy producer/consumer,
                           background pass + scheduler, singletons
       storage/            storageProvider.ts, storageProviderFactory.ts,
                           s3StorageService.ts, s3Signing.ts, s3Transfer.ts
@@ -74,7 +74,7 @@ all supported by Expo Go. The S3 client adds no native module — SigV4 signing
 uses the pure-JS `js-sha256` package and transfers use Expo FileSystem — so
 there is **no SDK build step and no custom development build** required.
 
-Backend services (Identity API, S3 bucket, Kafka REST proxy) are **optional**.
+Backend services (Identity API, S3 bucket, Kafka proxy) are **optional**.
 Without them the UI, navigation, theming, local database and scanning all work;
 network-dependent actions surface an explanatory error instead.
 
@@ -125,8 +125,6 @@ editing either file** — changes are not hot-reloaded.
 | --- | --- | --- |
 | `IdentityApiBaseUrl` | `EXPO_PUBLIC_IDENTITY_API_BASE_URL` | Identity API origin: the Vercel function (`https://<vercel-project>.vercel.app`) or the local .NET service (`http://localhost:5102`). **Empty means the app cannot sign in** and shows “Identity API base URL is not configured.” |
 | `IdentityApiTimeoutSeconds` | `30` | Timeout for auth requests (register/login/refresh). |
-| `Auth.Jwt.Issuer` | `"stash-auth"` | Expected token issuer (informational / validation parity). |
-| `Auth.Jwt.Audience` | `"stash-app"` | Expected token audience. |
 
 Set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` to `https://<vercel-project>.vercel.app` (deployed Vercel function) or `http://localhost:5102` (local .NET API); no trailing slash is required. The Vercel function serves `POST /api/auth/register|login|refresh|revoke` and `GET /api/auth/health`; the health route is the liveness check.
 
@@ -203,16 +201,16 @@ EXPO_PUBLIC_S3_PRESIGN_EXPIRY_SECONDS=3600
 > `DeleteObject` and `HeadObject` on this bucket/prefix, and rotate anything
 > that was ever committed.
 
-### 4.5 Kafka transport (Vercel proxy or REST proxy)
+### 4.5 Kafka transport (Stash proxy)
 
-The app can reach Kafka through the **Stash Kafka proxy** deployed as a Vercel
-Function (`kafka_proxy_vercel/`), or through a Confluent REST Proxy directly.
-The proxy is preferred for production: broker credentials stay server-side and
-upload responses arrive by polling instead of a long-lived REST consumer.
+All Kafka traffic goes through the **Stash Kafka proxy** (`kafka_proxy_vercel/`
+deployed as a Vercel Function, or the local Node server started by
+`scripts/setup-and-run.mjs`). Broker credentials stay server-side, and upload
+responses arrive by polling. Set `EXPO_PUBLIC_KAFKA_PROXY_BASE_URL` (or
+`Kafka.Proxy.BaseUrl`) to the proxy origin.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `Kafka.Proxy.Enabled` | `false` | Use the Vercel proxy for produce/poll instead of the REST transport. |
 | `Kafka.Proxy.BaseUrl` | `EXPO_PUBLIC_KAFKA_PROXY_BASE_URL` | Deployed proxy URL, e.g. `https://stash-kafka-proxy-<team>.vercel.app`. |
 | `Kafka.Proxy.PollIntervalMs` | `15000` | Delay between polls after an empty poll (clamped 1 s–5 min). |
 | `Kafka.Proxy.PollTimeoutMs` | `8000` | Server-side long-poll window per request (max 30 s). |
@@ -222,34 +220,18 @@ upload responses arrive by polling instead of a long-lived REST consumer.
 A full page of records is drained immediately; failures back off exponentially
 (2 s → 60 s) and deliveries are de-duplicated by `topic/partition/offset`.
 
-With `Kafka.Proxy.Enabled = false` (the shipped default) the app keeps using the
-direct REST transport below.
-
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `Kafka.RestUrl` | `EXPO_PUBLIC_KAFKA_REST_URL` | Confluent REST Proxy base URL, e.g. `https://kafka-rest.example.com/`. |
-| `Kafka.RestUsername` / `RestPassword` | `EXPO_PUBLIC_KAFKA_REST_USERNAME` / `EXPO_PUBLIC_KAFKA_REST_PASSWORD` | HTTP Basic credentials for the proxy (blank = anonymous). |
-| `Kafka.RestTimeoutSeconds` | `30` | Per-request timeout. |
-| `Kafka.ClusterId` | `EXPO_PUBLIC_KAFKA_CLUSTER_ID` | Cluster id for the v3 produce endpoint; discovered via `GET v3/clusters` when blank. |
 | `Kafka.TopicUploadRequest` | `stash.upload.request` | Topic for upload requests. |
 | `Kafka.TopicUploadResponse` | `stash.upload.response` | Topic consumed for processing results. |
 | `Kafka.TopicDeadLetter` | `stash.dlq` | Dead-letter topic for exhausted retries. |
-
-### 4.6 Telemetry
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `ApplicationInsights.Enabled` | `false` | Reserved flag (parity with MAUI config). |
-| `ApplicationInsights.ConnectionString` | `EXPO_PUBLIC_APPINSIGHTS_CONNECTION_STRING` | Reserved value. |
 
 Minimal working configuration:
 
 ```bash
 # .env (git-ignored) — copy from .env.example
 EXPO_PUBLIC_IDENTITY_API_BASE_URL=https://<vercel-project>.vercel.app
-EXPO_PUBLIC_KAFKA_REST_URL=https://kafka-rest.example.com/
-EXPO_PUBLIC_KAFKA_REST_USERNAME=
-EXPO_PUBLIC_KAFKA_REST_PASSWORD=
+EXPO_PUBLIC_KAFKA_PROXY_BASE_URL=https://<vercel-project>.vercel.app
 EXPO_PUBLIC_S3_BUCKET=stash-uploads
 EXPO_PUBLIC_S3_REGION=us-east-1
 EXPO_PUBLIC_S3_ACCESS_KEY_ID=
@@ -441,7 +423,7 @@ the browser use Upload → Pick Files.
 - **Configuration** — read-only readout of the effective values: Identity API,
   request timeout, storage provider, storage bucket, storage region, batch
   size, max retries, max file size, background cadence, files per run, Kafka
-  REST proxy and the three topics. This is the quickest way to verify a
+  proxy and the three topics. This is the quickest way to verify a
   deployment picked up the right `appconfig.json` plus `.env` values.
 - **Diagnostics** — a read-only health snapshot (files by status, stuck
   uploads/processing, outbox state, hash-cache and processed-response
@@ -511,21 +493,18 @@ Steps performed by the upload manager:
    mapping and no storage account login are involved.
    `existsAsync`/`getFileSizeAsync` use presigned `HEAD`, `downloadAsync` uses a
    presigned `GET`, and `deleteFileAsync` uses a presigned `DELETE`.
-5. **Publish** — with `Kafka.Proxy.Enabled`, an authenticated
-   `POST {Kafka.Proxy.BaseUrl}/api/messages` to the Vercel proxy, which produces
+5. **Publish** — an authenticated
+   `POST {Kafka.Proxy.BaseUrl}/api/messages` to the proxy, which produces
    the record with the native Confluent client and adds the headers
    `X-Message-Version`, `Authorization`, `X-Correlation-Id`, `X-Device-Id`,
-   `X-User-Id`. Otherwise a Confluent REST Proxy **v3** produce call to
-   `POST {RestUrl}v3/clusters/{clusterId}/topics/{topic}/records`.
-6. **Consume** — with the proxy enabled, a **polling loop**
+   `X-User-Id`.
+6. **Consume** — a **polling loop**
    (`GET {Kafka.Proxy.BaseUrl}/api/messages?topic=…`) drains
    `TopicUploadResponse`; the proxy filters the returned records to the verified
    device/user and drops unidentified records before the app sees them.
-   Otherwise a **v2** consumer (`POST consumers/{groupId}`,
-   subscription, `GET .../records`) reads it without a server-side identity
-   filter. Either way records are matched by `fileId`/`correlationId` (and
-   response identity when present) and move rows to `Processing`, `Completed` or
-   `Failed`. Exhausted retries are produced to `TopicDeadLetter`.
+   Records are matched by `fileId`/`correlationId` (and response identity when
+   present) and move rows to `Processing`, `Completed` or `Failed`. Exhausted
+   retries are produced to `TopicDeadLetter`.
 
 Upload request payload (`camelCase` JSON, version 2):
 
@@ -615,8 +594,8 @@ Identity requests go to the Identity API (Vercel or local .NET) at `{IdentityApi
 | Login | `POST {IdentityApiBaseUrl}/api/auth/login` `{ email, password, deviceId }` |
 | Refresh | `POST {IdentityApiBaseUrl}/api/auth/refresh` `{ refreshToken }` |
 | Revoke device | `POST {IdentityApiBaseUrl}/api/auth/revoke` `{ deviceId }` + `Authorization: Bearer <access token>` |
-| Kafka produce | `POST {RestUrl}v3/clusters/{id}/topics/{topic}/records` |
-| Kafka consume | `POST {RestUrl}consumers/{group}` → `POST .../subscription` → `GET .../records` |
+| Kafka produce | `POST {Kafka.Proxy.BaseUrl}/api/messages` + `Authorization: Bearer <access token>` |
+| Kafka consume | `GET {Kafka.Proxy.BaseUrl}/api/messages?topic=…` (long-poll) |
 
 S3 is **not** part of this HTTP contract: the app writes directly to the bucket
 with presigned URLs generated on the device. The host must therefore:
@@ -664,7 +643,6 @@ around.
 | S3 request redirects, or DNS/TLS errors | Wrong region or endpoint | Set the bucket's real region. For AWS leave `Endpoint` empty; for MinIO/R2 set the correct `Endpoint` (and path style if required). |
 | Web upload says *“Failed to fetch”* / CORS preflight fails | The bucket has no CORS rule for the Expo origin | Add a bucket CORS rule allowing `PUT`, `GET`, `HEAD` (and the request headers the browser sends) from `http://localhost:8081` or your deployed origin. |
 | S3 transfer fails immediately on Android with a `content://` URI | The SAF provider cannot be streamed directly | Expected fallback: the app stages a cache copy before uploading; check free cache space and storage permission. |
-| Kafka produce fails with *no cluster_id* | Proxy did not return a cluster id | Set `EXPO_PUBLIC_KAFKA_CLUSTER_ID` explicitly (e.g. `confluent-local`). |
 | Files never reach `Completed` | No consumer running, wrong `TopicUploadResponse`, the host never replies, or the host rejects version 2 | Confirm the topic names and consumer endpoints. With the repository backend, expect v2 requests to be rejected until S3/version-2 support is added. |
 | Folder scan finds nothing | Folder disabled, stale iOS grant, unreadable URI, or files outside the 14 patterns | Enable the folder; re-select it with Choose Folder (especially after an iOS restart); verify the extension; folder scanning is native-only. |
 | Theme does not follow the OS | A fixed mode is selected | Settings → Appearance → **System**. |
@@ -766,7 +744,7 @@ backend does not yet do so. No live S3 run is claimed by this guide.
 | Status labels, colours, icons | `src/models/uploadStatus.ts` |
 | SQLite schema and `storage_temp_path` migration | `src/data/database.ts` |
 | Kafka message contracts | `src/models/messages.ts` |
-| Kafka REST calls | `src/services/kafkaRestTransport.ts` |
+| Kafka proxy calls | `src/services/kafkaProxyTransport.ts` |
 | Storage provider contract | `src/services/storage/storageProvider.ts` |
 | Storage provider factory | `src/services/storage/storageProviderFactory.ts` |
 | S3 upload/exists/download/delete | `src/services/storage/s3StorageService.ts` |

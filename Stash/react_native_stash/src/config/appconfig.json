@@ -1,19 +1,10 @@
 {
   "Kafka": {
-    "BootstrapServers": "",
-    "Username": "",
-    "Password": "",
-    "RestUrl": "",
-    "RestUsername": "",
-    "RestPassword": "",
-    "RestTimeoutSeconds": 30,
-    "ClusterId": "",
     "TopicUploadRequest": "stash.upload.request",
     "TopicUploadResponse": "stash.upload.response",
     "TopicDeadLetter": "stash.dlq",
     "Proxy": {
-      "Enabled": false,
-      "BaseUrl": "",
+      "BaseUrl": "http://192.168.0.19:3000",
       "PollIntervalMs": 15000,
       "PollTimeoutMs": 8000,
       "MaxRecordsPerPoll": 50,
@@ -23,24 +14,18 @@
   "Storage": {
     "Provider": "S3",
     "S3": {
-      "Bucket": "",
-      "Region": "us-east-1",
-      "AccessKeyId": "",
-      "SecretAccessKey": "",
+      "Bucket": "stash-uploads-staging",
+      "Region": "eu-central-003",
+      "AccessKeyId": "003159e79802b5c0000000002",
+      "SecretAccessKey": "K003eFFNsc065gX9I8GuWgUyg2TOkPg",
       "SessionToken": "",
-      "Endpoint": "",
+      "Endpoint": "https://s3.eu-central-003.backblazeb2.com",
       "ForcePathStyle": false,
       "Prefix": "",
       "PresignExpirySeconds": 3600
     }
   },
-  "Auth": {
-    "Jwt": {
-      "Issuer": "stash-auth",
-      "Audience": "stash-app"
-    }
-  },
-  "IdentityApiBaseUrl": "",
+  "IdentityApiBaseUrl": "http://192.168.0.19:3000",
   "IdentityApiTimeoutSeconds": 30,
   "UploadSettings": {
     "BatchSize": 10,
@@ -53,9 +38,5 @@
     "Enabled": true,
     "IntervalMinutes": 15,
     "MaxFilesPerRun": 50
-  },
-  "ApplicationInsights": {
-    "Enabled": false,
-    "ConnectionString": ""
   }
 }

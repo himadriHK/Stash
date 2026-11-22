@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase } from './database';
+import { runSerializedAsync } from './transactionQueue';
 import { nowIso } from '../services/retryPolicy';
 
 export interface ProcessedMessageInput {
@@ -47,7 +48,8 @@ export class ProcessedMessageRepository {
 
   async recordAsync(input: ProcessedMessageInput): Promise<void> {
     const db = await this.open();
-    await recordProcessedMessageWithDbAsync(db, input);
+    // Queued so the insert cannot land inside another caller's transaction.
+    await runSerializedAsync(() => recordProcessedMessageWithDbAsync(db, input));
   }
 }
 

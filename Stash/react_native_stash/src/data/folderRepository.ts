@@ -5,6 +5,7 @@
  */
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase, parseJsonColumn } from './database';
+import { runWriteAsync } from './transactionQueue';
 import type { FolderConfig } from '../models/folderConfig';
 import { createDefaultIncludePatterns } from '../models/mediaPatterns';
 
@@ -67,7 +68,8 @@ export class FolderRepository {
 
   async addAsync(folder: FolderConfig): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `INSERT INTO folder_configs (
         id, folder_path, folder_name, is_enabled, added_at, last_scanned_at,
         include_patterns, exclude_patterns, include_subfolders
@@ -88,7 +90,8 @@ export class FolderRepository {
 
   async updateAsync(folder: FolderConfig): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `UPDATE folder_configs SET
         folder_path = ?, folder_name = ?, is_enabled = ?, added_at = ?, last_scanned_at = ?,
         include_patterns = ?, exclude_patterns = ?, include_subfolders = ?
@@ -109,7 +112,7 @@ export class FolderRepository {
 
   async deleteAsync(id: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync('DELETE FROM folder_configs WHERE id = ?', [id]);
+    await runWriteAsync(db, 'DELETE FROM folder_configs WHERE id = ?', [id]);
   }
 }
 

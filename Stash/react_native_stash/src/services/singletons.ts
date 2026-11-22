@@ -4,7 +4,7 @@
  * repositories -> lifecycle/outbox -> scanner/storage -> upload manager ->
  * Kafka -> background pass.
  */
-import { appConfig, kafkaProxyUrl } from '../config/appConfig';
+import { appConfig } from '../config/appConfig';
 import { FileRepository } from '../data/fileRepository';
 import { FolderRepository } from '../data/folderRepository';
 import { HashCacheRepository } from '../data/hashCacheRepository';
@@ -17,7 +17,6 @@ import { folderScannerService } from './folderScannerService';
 import { KafkaConsumer } from './kafkaConsumer';
 import { KafkaProducer } from './kafkaProducer';
 import { kafkaProxyTransport } from './kafkaProxyTransport';
-import { kafkaRestTransport } from './kafkaRestTransport';
 import type { KafkaTransport } from './kafkaTransport';
 import { OutboxPublisher } from './outboxPublisher';
 import { createStorageProvider } from './storage/storageProviderFactory';
@@ -34,19 +33,8 @@ export const folderIngestionService = new FolderIngestionService(
   hashCacheRepository,
 );
 
-/**
- * The proxy is the supported production path (no broker credentials on the
- * device, and polling instead of a long-lived REST consumer). The direct REST
- * transport stays available for local/dev setups.
- */
-function selectKafkaTransport(): KafkaTransport {
-  if (appConfig.Kafka.Proxy.Enabled && kafkaProxyUrl()) {
-    return kafkaProxyTransport;
-  }
-  return kafkaRestTransport;
-}
-
-export const kafkaTransport: KafkaTransport = selectKafkaTransport();
+/** Kafka traffic always goes through the Stash Kafka proxy (no broker credentials on the device). */
+export const kafkaTransport: KafkaTransport = kafkaProxyTransport;
 export const kafkaProducer = new KafkaProducer(kafkaTransport);
 export const fileLifecycleService = new FileLifecycleService();
 export const outboxRepository = new OutboxRepository();

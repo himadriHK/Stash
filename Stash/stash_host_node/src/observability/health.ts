@@ -123,26 +123,11 @@ export function checkConfig(env: AppEnv): HealthCheckResult {
   };
 }
 
-export function createStubCheck(component: string, message: string): HealthCheckDefinition {
-  return {
-    component,
-    run: () => ({ status: 'unknown', latencyMs: null, message }),
-  };
-}
-
 export function createBasicHealthRegistry(db: Db, env: AppEnv): HealthRegistry {
   const registry = new HealthRegistry();
   registry.register('database', () => checkDatabase(db));
   registry.register('temp_dir', () => checkTempDir(env));
   registry.register('config', () => checkConfig(env));
-  registry.register(
-    's3',
-    createStubCheck('s3', 'S3 health checks are implemented in phase 4').run,
-  );
-  registry.register(
-    'kafka',
-    createStubCheck('kafka', 'Kafka health checks are implemented in phase 4').run,
-  );
   return registry;
 }
 

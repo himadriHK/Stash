@@ -72,7 +72,6 @@ flowchart LR
         Identity["Identity API (Vercel function or local .NET): /api/auth/*"]
         S3["Amazon S3 or compatible bucket"]
         Proxy["Kafka proxy"]
-        Rest["Confluent REST proxy"]
         Topics["Kafka topics: stash.upload.request, stash.upload.response, stash.dlq"]
         Mega["MEGA staging (legacy host provider)"]
     end
@@ -91,13 +90,10 @@ flowchart LR
     UI -->|"register, login, refresh, revoke"| Identity
     Svc -->|"presigned SigV4 PUT"| S3
     Svc -->|"POST produce and GET poll"| Proxy
-    Svc -->|"v3 produce and v2 consume"| Rest
     Proxy -->|"server-side produce and poll"| Topics
-    Rest -->|"produce and consume"| Topics
     Topics -->|"upload.request v2"| Host
     Host -->|"upload.response"| Topics
     Topics -->|"response records"| Proxy
-    Topics -->|"response records"| Rest
     Host -->|"current repo path"| Mega
     Host --> Library
     Host -.->|"host S3 support not in repo"| S3
@@ -106,7 +102,7 @@ flowchart LR
 Notes:
 
 - The app talks to S3 directly; there is no upload bridge in the client path.
-- Kafka proxy and Confluent REST proxy are alternative transports. The app selects one at startup.
+- All Kafka traffic goes through the Stash Kafka proxy.
 - The host reads and writes Kafka. The dashed host-to-S3 edge is the missing repository capability.
 - MEGA is shown only as the repository host's current staging provider. It is not the current React Native storage provider.
 - The Identity API is the Vercel function in `kafka_proxy_vercel` (serving `/api/auth/*`) or the local .NET `StashHost.IdentityApi`. Tokens are HS256 with issuer `stash-auth` and audience `stash-app`; the Kafka proxy and any host still validating tokens must share the signing key.
@@ -160,7 +156,6 @@ flowchart TB
         Producer["kafkaProducer.ts"]
         Consumer["kafkaConsumer.ts"]
         ProxyTransport["kafkaProxyTransport.ts"]
-        RestTransport["kafkaRestTransport.ts"]
     end
 
     subgraph PlatformLayer["Platform Adapters"]
@@ -301,11 +296,10 @@ The diagram groups implementation files, not runtime processes. `Wiring` is the 
 | Kafka | Producer | `src/services/kafkaProducer.ts` | Auth check, header construction, upload request/response and dead-letter production. |
 | Kafka | Consumer | `src/services/kafkaConsumer.ts` | Consume upload responses, parse, filter statuses, correlate by request identity, dedup message IDs and apply through `FileLifecycleService`. |
 | Kafka | Proxy transport | `src/services/kafkaProxyTransport.ts` | `POST /api/messages` produce, `GET /api/messages` polling, backoff, seen-record dedup; the proxy server filters polled records to the token device/user. |
-| Kafka | REST transport | `src/services/kafkaRestTransport.ts` | Confluent REST Proxy v3 produce with cluster discovery/base64 fields, v2 consumer lifecycle. |
 | Storage | Provider contract | `src/services/storage/storageProvider.ts` | `StorageProvider`, upload source shape, logical path semantics. |
 | Storage | Provider factory | `src/services/storage/storageProviderFactory.ts` | Accepts S3 case-insensitively; rejects any other provider. |
-| Storage | S3 service | `src/services/storage/s3StorageService.ts` | Config validation, path canonicalization, prefix mapping, presigned PUT/GET/HEAD/DELETE, payload-hash signing on upload, upload/exists/download/delete/size. |
-| Storage | SigV4 signer | `src/services/storage/s3Signing.ts` | Pure-JS query-string presigner using `js-sha256`, host-only signing, optional signed SHA-256 payload hash (uploads) with `UNSIGNED-PAYLOAD` default. |
+| Storage | S3 service | `src/services/storage/s3StorageService.ts` | Config validation, path canonicalization, prefix mapping, presigned PUT/GET/HEAD/DELETE, upload/exists/download/delete/size. |
+| Storage | SigV4 signer | `src/services/storage/s3Signing.ts` | Pure-JS query-string presigner using `js-sha256`, host-only signing, `UNSIGNED-PAYLOAD` for every method (payload-hash signing of a presigned URL is rejected by S3 and B2). |
 | Storage | S3 transfer | `src/services/storage/s3Transfer.ts` | SDK 58 `File.createUploadTask` streaming upload and legacy download; web Blob/fetch and object-URL download. |
 | Platform adapter | Secure storage | `src/utils/storage.ts` | SecureStore on native, localStorage with memory fallback on web. |
 | Platform adapter | File access | `src/utils/fileAccess.ts` | Platform-aware existence/size/read helpers, content URI staging with cache cleanup, web Blob reads. |
@@ -848,13 +842,13 @@ Addressing:
 3. Choose AWS or the custom endpoint and choose virtual-hosted or path-style addressing.
 4. Format the date as `yyyyMMddTHHmmssZ` and build the credential scope `{date}/{region}/s3/aws4_request`.
 5. Build sorted, RFC3986-encoded query parameters: `X-Amz-Algorithm`, `X-Amz-Credential`, `X-Amz-Date`, `X-Amz-Expires`, `X-Amz-SignedHeaders=host`, plus `X-Amz-Security-Token` when a session token exists.
-6. Build the canonical request with only the `host` signed header. `PUT` uploads pass the file's lowercase SHA-256 as the canonical payload hash when it is known; GET/HEAD/DELETE and hashless uploads use `UNSIGNED-PAYLOAD`.
+6. Build the canonical request with only the `host` signed header and the constant `UNSIGNED-PAYLOAD`, for every method including `PUT`.
 7. Derive the signing key through the HMAC chain and append `X-Amz-Signature`.
 8. Clamp the expiry to 1...604800 seconds. The configured default is 3600 seconds.
 
 The signer is pure JavaScript: `js-sha256` provides SHA-256 and HMAC. There is no WebCrypto, Node `crypto`, `Buffer`, stream or AWS SDK dependency.
 
-Signing the payload hash binds the presigned URL to the bytes the app hashed locally. If the file changes between hashing and transfer, S3 rejects the PUT instead of storing content that no longer matches `files.content_hash`. The hash is validated as 64 hexadecimal characters before it is used.
+SigV4 query-string presigning has no request body to hash when the URL is minted, so the canonical request must use `UNSIGNED-PAYLOAD` (AWS documents this for presigned URLs). Signing the file's SHA-256 there instead, without sending a matching `x-amz-content-sha256` header, makes the service compute a different canonical request and answer `403 SignatureDoesNotMatch`; sending the header does not help because a presigned request whose canonical request carries a real payload hash is not accepted. Integrity of the stored object is instead anchored by the content hash in the object key (`/temp/uploads/{deviceId}/{contentHash}/{fileName}`), which the host can compare with `files.content_hash`.
 
 ### 8.3 Native and web transfer matrix
 
@@ -995,40 +989,26 @@ The repository host currently emits `version: 1` responses and now includes `dev
 | `X-User-Id` | user ID | Account identity when available. |
 | `x-dlq-reason` | dead-letter only | Error text attached to `stash.dlq` records. |
 
-Kafka record key: `fileId` (content hash). In the Confluent REST transport, the key and header values are Base64-encoded in the v3 record envelope. The proxy transport sends the same header names and string values in its JSON body.
+Kafka record key: `fileId` (content hash). The proxy transport sends the header names and string values in its JSON body.
 
 The upload request producer sets `X-Message-Version` from `message.version` (2). The producer's response and dead-letter helpers use the helper's default version header (1); the DLQ reason is carried separately in `x-dlq-reason`. `KafkaProducer` first calls `ensureValidAccessTokenAsync`, refuses to produce without a token, fills missing device/user/correlation IDs, and delegates to the selected transport. Upload requests are produced by `OutboxPublisher`, which persists the intent first and marks the outbox row sent only after the transport accepts the record.
 
 ### 9.5 Transport selection
 
-`singletons.ts` chooses the transport once:
+`singletons.ts` always uses `KafkaProxyTransport`. `Kafka.Proxy.BaseUrl` must be configured (not empty, not a placeholder containing `<` or `>`).
 
-- `KafkaProxyTransport` when `Kafka.Proxy.Enabled` is true and `Kafka.Proxy.BaseUrl` is configured (not empty, not a placeholder containing `<` or `>`).
-- `KafkaRestTransport` otherwise.
-
-```mermaid
-flowchart TD
-    Start["Module load"] --> Enabled{"Kafka.Proxy.Enabled?"}
-    Enabled -->|"no"| Rest["KafkaRestTransport"]
-    Enabled -->|"yes"| Url{"Proxy.BaseUrl configured?"}
-    Url -->|"yes"| Proxy["KafkaProxyTransport"]
-    Url -->|"no"| Rest
-```
-
-| Concern | Kafka proxy transport | Confluent REST transport |
-| --- | --- | --- |
-| Produce | `POST {base}/api/messages` with bearer token and JSON `{topic,key,value,headers}` | `POST {rest}/v3/clusters/{cluster}/topics/{topic}/records` with JSON record envelope |
-| Consume | `GET {base}/api/messages?topic=...&timeoutMs=...&maxRecords=...` polling loop; records for another device/user or with no usable `deviceId` are dropped before returning | v2 consumer create, subscription, `GET .../records?timeout=10000&max_bytes=1048576` (no server-side identity filter) |
-| Credentials on device | Access token only; broker credentials stay behind the proxy | REST proxy Basic credentials if configured; direct broker credentials are not used |
-| Consumer group | Passed for validation; the proxy derives the effective group from the token | `stash-mobile-{deviceId}` |
-| Error behavior | Exponential backoff from 2 s up to 60 s; 401 produce retried once after refresh | Recreate consumer on 404 or errors; 5 s delay between recovery attempts |
-| Duplicate suppression | In-memory seen set of 1000 records keyed by topic/partition/offset or topic/key/value | Broker consumer-group offsets with `auto.offset.reset=earliest` and auto-commit |
+| Concern | Behavior |
+| --- | --- |
+| Produce | `POST {base}/api/messages` with bearer token and JSON `{topic,key,value,headers}` |
+| Consume | `GET {base}/api/messages?topic=...&timeoutMs=...&maxRecords=...` polling loop; records for another device/user or with no usable `deviceId` are dropped before returning |
+| Credentials on device | Access token only; broker credentials stay behind the proxy |
+| Consumer group | Passed for validation; the proxy derives the effective group from the token |
+| Error behavior | Exponential backoff from 2 s up to 60 s; 401 produce retried once after refresh |
+| Duplicate suppression | In-memory seen set of 1000 records keyed by topic/partition/offset or topic/key/value |
 
 ### 9.6 Consumer group and offsets
 
-- The app passes `stash-mobile-{deviceId}` to both transports.
-- The REST transport uses that group in `POST consumers/{groupId}` and sets `format=json`, `auto.offset.reset=earliest`, `auto.commit.enable=true`. When `Kafka.ClusterId` is empty, produce discovers the first `cluster_id` from `GET v3/clusters` and caches it; a configured ID skips discovery.
-- The REST consumer polls for 10 seconds per request and recreates the consumer instance on 404 or transport errors; it deletes the consumer in `finally`.
+- The app passes `stash-mobile-{deviceId}` as the consumer group id; the proxy derives the effective group from the token.
 - The proxy transport polls on a configured interval (15 s default), server-side long-poll timeout (8 s default), and maximum records per poll (50 default). A full page is followed immediately; an empty page waits for the interval.
 - The proxy filters each polled record by the token's `deviceId`/`userId` before returning it and excludes records without a usable `deviceId`. The gateway still reads the shared topic before filtering, so read amplification remains.
 - The proxy commits offsets after each poll batch, before the client applies a record. An ACK/inbox (commit-after-delivery) protocol is a known gap.
@@ -1042,7 +1022,7 @@ The repository host still uses `Storage:Provider=Mega`, `MegaStorageProvider`, a
 
 ### 9.8 Delivery and filtering caveats
 
-- Through the Vercel proxy, response records are filtered to the verified device and user before they are returned: records with a different `deviceId`, a conflicting `userId`, or no usable `deviceId` (legacy/unidentified) are excluded. The direct Confluent REST transport has no equivalent server-side filter; the client still matches locally by content hash, requires matching response identity/correlation when present, and ignores message IDs already recorded in `processed_messages`.
+- Through the Vercel proxy, response records are filtered to the verified device and user before they are returned: records with a different `deviceId`, a conflicting `userId`, or no usable `deviceId` (legacy/unidentified) are excluded. The client still matches locally by content hash, requires matching response identity/correlation when present, and ignores message IDs already recorded in `processed_messages`.
 - The gateway can still read other devices' response records from the shared topic before dropping them (read amplification), and it commits offsets before the app acknowledges application to SQLite. A crash between commit and apply can therefore lose a response. The durable processed-message store makes redelivery idempotent but does not remove the commit-before-apply loss window.
 - Server-side response routing to remove read amplification and an ACK/inbox (commit-after-delivery) protocol remain blocked cross-team work. Host S3 support and request-v2 acceptance are also blocked; the repository host remains MEGA/v1 and end-to-end S3 processing is not claimed.
 
@@ -1118,7 +1098,7 @@ Web notes:
 - **Global hash uniqueness.** `content_hash` is unique across the local database, and consumer lookup does not filter by `user_id` or `device_id`. Two accounts using the same installation share the dedup namespace.
 - **Auth failures can stay pending indefinitely.** An outbox row with an auth error deliberately does not consume the publish retry budget and is not dead-lettered, because a token refresh can recover it. A permanently invalid identity needs an explicit terminal (non-auth) error to reach the DLQ.
 - **Local-terminal manual retry only.** Local-missing and oversize failures set `failure_stage='local'`, do not increment retry, and are excluded from automatic background candidates. They require a manual retry; a manual retry re-enters the guarded lifecycle.
-- **Dedup is client-side only.** `processed_messages` makes redelivery idempotent, but the proxy/REST transports still auto-commit offsets before the app acknowledges the SQLite apply. A crash between commit and apply can lose a response. The Vercel proxy now filters responses by device/user; the direct REST transport still has no server-side filter, and ACK/inbox remains blocked.
+- **Dedup is client-side only.** `processed_messages` makes redelivery idempotent, but the proxy still auto-commits offsets before the app acknowledges the SQLite apply. A crash between commit and apply can lose a response. Proxy-side filtering limits responses to the device/user, but ACK/inbox remains blocked.
 - **No OS background execution.** The scheduler is a foreground `setInterval`; iOS/Android suspension stops it.
 
 ### 11.4 Diagnostics and failure visibility
@@ -1157,14 +1137,13 @@ shipping or SLO alert delivery, and the runtime snapshots reset on reload.
 - S3 access keys are inlined into the app bundle through `EXPO_PUBLIC_*`. Anyone with the bundle can extract them. Use scoped credentials, least privilege and rotation.
 - A presigned URL is a bearer capability for a method, object key and expiry window. The URL is generated on the device and used directly; it is not sent to the host.
 - The S3 service and transfer module redact signature and security-token query parameters from error logs.
-- The app signs only `host`. Uploads sign the file's SHA-256 payload hash; GET/HEAD/DELETE and hashless uploads use `UNSIGNED-PAYLOAD`. Transport security still relies on HTTPS and S3's presigned-URL semantics.
+- The app signs only `host` and uses `UNSIGNED-PAYLOAD` for all presigned methods. Transport security still relies on HTTPS and S3's presigned-URL semantics; the content hash in the object key is what the host verifies after upload.
 - Custom endpoints can be `http://`; that removes transport encryption and should be limited to local development.
 
 ### 12.3 Kafka trust boundaries
 
-- The proxy path keeps Kafka broker credentials off the device. The app sends its Identity access token; the proxy derives the consumer group from that token.
-- The direct REST path may carry REST proxy Basic credentials from `EXPO_PUBLIC_*`; direct broker username/password settings exist in config but are not used by the React Native transports.
-- The proxy transport retries a produce once after a 401 and a successful token refresh. The REST transport does not attach the Identity token to Kafka records except for the `Authorization` header built by the producer.
+- The proxy keeps Kafka broker credentials off the device. The app sends its Identity access token; the proxy derives the consumer group from that token.
+- The proxy transport retries a produce once after a 401 and a successful token refresh.
 - Upload request headers carry `Authorization`, correlation, device and user IDs. Do not put secrets in message values or logs.
 - The host is a separate trust boundary. The app assumes the host or proxy authorizes requests and that the host owns conversion, thumbnails and permanent storage; the repository host's current MEGA/v1 behavior is the documented gap.
 
@@ -1185,14 +1164,13 @@ shipping or SLO alert delivery, and the runtime snapshots reset on reload.
 - **Web constraints.** No folder enumeration (picker-only uploads), whole-file hashing and upload buffering, localStorage token storage, console-only logs, and S3 CORS requirements.
 - **Unused statuses.** `Scanning`, `Hashing`, `Retrying` and `Deduplicated` exist in the enum/UI but are not assigned by the current core flow.
 - **Parity-only provider methods.** `existsAsync`, `downloadAsync`, `deleteFileAsync` and `getFileSizeAsync` have no current UI call sites.
-- **Client-side credentials.** S3 and REST proxy credentials are inlined into the bundle through `EXPO_PUBLIC_*`.
+- **Client-side credentials.** S3 credentials are inlined into the bundle through `EXPO_PUBLIC_*`.
 - **No cross-device sync.** SQLite is local to the installation; files and status rows are not synchronized between devices.
 - **Session-scoped iOS folder grants.** System-picked folders must be re-selected after an app restart; manual paths remain for development and legacy locations.
 - **No live S3/device verification claimed.** The pre-Phase-1B presigner and the web bundle were verified, but the signed payload-hash PUT and live transfer were not.
 - **No client-side temporary-object cleanup** after a publish failure.
 - **Client-side-only response dedup.** `processed_messages` makes redelivery idempotent, but transport offsets can still be committed before the SQLite apply. Proxy-side filtering is implemented; ACK/inbox and server-side routing remain blocked.
 - **On-device diagnostics only.** The Settings snapshot, `file_events` audit and persistent error log are local and reset on reload; remote telemetry/log shipping and SLO alert delivery are deferred.
-- **Config-only features.** `Auth.Jwt` issuer/audience and `ApplicationInsights` are present in configuration but unused by the current React Native code. Direct Kafka broker credentials are not used by the transports.
 - **App does not process media.** Conversion, thumbnails and permanent storage are host responsibilities.
 
 ---
@@ -1218,7 +1196,7 @@ shipping or SLO alert delivery, and the runtime snapshots reset on reload.
 | Service wiring | `src/services/singletons.ts` |
 | Storage contract and factory | `src/services/storage/storageProvider.ts`, `src/services/storage/storageProviderFactory.ts` |
 | S3 service, signing and transfer | `src/services/storage/s3StorageService.ts`, `src/services/storage/s3Signing.ts`, `src/services/storage/s3Transfer.ts` |
-| Kafka contracts and transport | `src/services/kafkaTransport.ts`, `src/services/kafkaProducer.ts`, `src/services/kafkaConsumer.ts`, `src/services/kafkaProxyTransport.ts`, `src/services/kafkaRestTransport.ts` |
+| Kafka contracts and transport | `src/services/kafkaTransport.ts`, `src/services/kafkaProducer.ts`, `src/services/kafkaConsumer.ts`, `src/services/kafkaProxyTransport.ts` |
 | Kafka message shapes | `src/models/messages.ts` |
 | Configuration | `src/config/appconfig.json`, `src/config/appConfig.ts`, `.env.example` |
 | Secure/local storage adapter | `src/utils/storage.ts` |

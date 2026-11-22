@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Stash Host — Dashboard</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/assets/styles.css">
+    <link rel="stylesheet" href="/assets/dashboard.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="sidebar__brand" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z"></path>
+              <path d="M4 7.5 12 12l8-4.5"></path>
+              <path d="M12 12v9"></path>
+            </svg>
+          </span>
+          <span>Stash Host</span>
+        </a>
+
+        <nav class="sidebar__nav" aria-label="Primary">
+          <a class="nav__link nav__link--active" href="/" aria-current="page">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+            </svg>
+            <span>Dashboard</span>
+          </a>
+          <a class="nav__link" href="/settings">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.4.34.75.65 1 .3.26.68.4 1.08.4H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"></path>
+            </svg>
+            <span>Settings</span>
+          </a>
+        </nav>
+
+        <div class="sidebar__footer">
+          <span>v0.1.0</span>
+          <span>Node service</span>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div>
+            <h1 class="topbar__title">Dashboard</h1>
+            <span class="topbar__meta">Stash Host · Node service</span>
+          </div>
+
+          <div class="topbar__actions">
+            <span class="live-indicator is-connecting" id="live-indicator" role="status" title="Live updates every 2 seconds">
+              <span class="live-indicator__dot" aria-hidden="true"></span>
+              <span id="live-label">Connecting…</span>
+            </span>
+            <span class="status-pill status-pill--muted" id="service-status" role="status">
+              <span class="dot dot--muted" aria-hidden="true"></span>
+              <span>Checking…</span>
+            </span>
+            <span class="chip" id="service-env">—</span>
+            <span class="chip" id="service-version">—</span>
+            <button class="btn btn--ghost btn--icon" id="refresh-btn" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                <path d="M21 3v6h-6"></path>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <main class="page" id="main-content" tabindex="-1">
+          <div class="banner banner--error" id="error-banner" role="alert" hidden>
+            <div class="banner__body">
+              <p class="banner__title">Unable to load dashboard</p>
+              <p id="error-message">Something went wrong.</p>
+            </div>
+            <div class="banner__actions">
+              <button class="btn btn--sm" id="retry-btn" type="button">Try again</button>
+            </div>
+          </div>
+
+          <div class="page-header">
+            <h2 class="page-title">Host overview</h2>
+            <p class="page-subtitle">Live view of ingestion, processing, and storage.</p>
+          </div>
+
+          <section class="card dashboard-hero" aria-label="Service overview">
+            <div class="hero-lead">
+              <p class="hero-eyebrow">Service status</p>
+              <p class="hero-status" id="hero-status">
+                <span class="skeleton skeleton--text" aria-hidden="true"></span>
+              </p>
+            </div>
+            <dl class="hero-meta">
+              <div class="hero-meta__item">
+                <dt>Uptime</dt>
+                <dd>
+                  <span id="hero-uptime">
+                    <span class="skeleton skeleton--text" aria-hidden="true"></span>
+                  </span>
+                </dd>
+              </div>
+              <div class="hero-meta__item">
+                <dt>Last updated</dt>
+                <dd>
+                  <span id="last-updated">
+                    <span class="skeleton skeleton--text" aria-hidden="true"></span>
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="kpi-grid" aria-label="Key metrics">
+            <article class="kpi">
+              <span class="kpi__icon kpi__icon--total" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"></path>
+                  <path d="m3 12 9 4.5 9-4.5"></path>
+                  <path d="m3 16.5 9 4.5 9-4.5"></path>
+                </svg>
+              </span>
+              <p class="kpi__label">Total jobs</p>
+              <p class="kpi__value" id="kpi-total">
+                <span class="skeleton skeleton--text" aria-hidden="true"></span>
+              </p>
+              <p class="kpi__hint">All recorded jobs</p>
+            </article>
+
+            <article class="kpi">
+              <span class="kpi__icon kpi__icon--completed" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <path d="m8.5 12 2.5 2.5 4.5-5"></path>
+                </svg>
+              </span>
+              <p class="kpi__label">Completed</p>
+              <p class="kpi__value" id="kpi-completed">
+                <span class="skeleton skeleton--text" aria-hidden="true"></span>
+              </p>
+              <p class="kpi__hint">Delivered successfully</p>
+            </article>
+
+            <article class="kpi">
+              <span class="kpi__icon kpi__icon--failed" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3 2.5 20h19L12 3Z"></path>
+                  <path d="M12 9v5"></path>
+                  <path d="M12 17h.01"></path>
+                </svg>
+              </span>
+              <p class="kpi__label">Failed</p>
+              <p class="kpi__value" id="kpi-failed">
+                <span class="skeleton skeleton--text" aria-hidden="true"></span>
+              </p>
+              <p class="kpi__hint">Needs attention</p>
+            </article>
+
+            <article class="kpi">
+              <span class="kpi__icon kpi__icon--active" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 12h4l3-7 4 14 3-7h4"></path>
+                </svg>
+              </span>
+              <p class="kpi__label">Active</p>
+              <p class="kpi__value" id="kpi-active">
+                <span class="skeleton skeleton--text" aria-hidden="true"></span>
+              </p>
+              <p class="kpi__hint">Queued or running</p>
+            </article>
+
+            <article class="kpi">
+              <span class="kpi__icon kpi__icon--bytes" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
+                  <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"></path>
+                  <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"></path>
+                </svg>
+              </span>
+              <p class="kpi__label">Data handled</p>
+              <p class="kpi__value" id="kpi-bytes">
+                <span class="skeleton skeleton--text" aria-hidden="true"></span>
+              </p>
+              <p class="kpi__hint">Declared upload size</p>
+            </article>
+
+            <article class="kpi">
+              <span class="kpi__icon kpi__icon--files" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 3H7a2 2 0 0 0-2 2v12"></path>
+                  <path d="M10 7h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"></path>
+                  <path d="M11 12h5"></path>
+                  <path d="M11 16h5"></path>
+                </svg>
+              </span>
+              <p class="kpi__label">Unique files</p>
+              <p class="kpi__value" id="kpi-files">
+                <span class="skeleton skeleton--text" aria-hidden="true"></span>
+              </p>
+              <p class="kpi__hint">Distinct file hashes</p>
+            </article>
+          </section>
+
+          <div class="dashboard-grid">
+            <section class="card activity-card" aria-labelledby="activity-title">
+              <header class="card__header">
+                <div>
+                  <h2 class="card__title" id="activity-title">Activity</h2>
+                  <p class="card__subtitle">Completed and failed jobs over the last 24 hours.</p>
+                </div>
+              </header>
+              <div class="card__body activity-card__body">
+                <div class="activity-chart" id="activity-chart" role="img" aria-label="Hourly job activity for the last 24 hours">
+                  <div class="skeleton activity-chart__skeleton" aria-hidden="true"></div>
+                </div>
+                <p class="card-footnote" id="activity-summary">Loading activity…</p>
+              </div>
+            </section>
+
+            <section class="card pipeline-card" aria-labelledby="pipeline-title">
+              <header class="card__header">
+                <div>
+                  <h2 class="card__title" id="pipeline-title">Pipeline</h2>
+                  <p class="card__subtitle">Queue health and outbox delivery.</p>
+                </div>
+              </header>
+              <div class="card__body">
+                <p class="notice" id="pipeline-notice" hidden></p>
+                <dl class="stat-rows">
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Kafka consumer</dt>
+                    <dd class="stat-row__value" id="pipeline-kafka">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Last message</dt>
+                    <dd class="stat-row__value" id="pipeline-last-message">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Queued jobs</dt>
+                    <dd class="stat-row__value" id="pipeline-queued">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Running jobs</dt>
+                    <dd class="stat-row__value" id="pipeline-running">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Stale leases</dt>
+                    <dd class="stat-row__value" id="pipeline-stale">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Oldest queued</dt>
+                    <dd class="stat-row__value" id="pipeline-oldest">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Outbox pending</dt>
+                    <dd class="stat-row__value" id="outbox-pending">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Outbox dead</dt>
+                    <dd class="stat-row__value" id="outbox-dead">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Failure rate</dt>
+                    <dd class="stat-row__value" id="failure-rate">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Avg processing</dt>
+                    <dd class="stat-row__value" id="avg-processing">—</dd>
+                  </div>
+                  <div class="stat-row">
+                    <dt class="stat-row__label">Max processing</dt>
+                    <dd class="stat-row__value" id="max-processing">—</dd>
+                  </div>
+                </dl>
+              </div>
+            </section>
+
+            <section class="card storage-card" aria-labelledby="storage-title">
+              <header class="card__header">
+                <div>
+                  <h2 class="card__title" id="storage-title">Storage</h2>
+                  <p class="card__subtitle">Local library capacity.</p>
+                </div>
+              </header>
+              <div class="card__body">
+                <div class="storage-figures">
+                  <div class="storage-figure">
+                    <span class="storage-figure__label">Free</span>
+                    <strong id="storage-free">—</strong>
+                  </div>
+                  <div class="storage-figure">
+                    <span class="storage-figure__label">Total</span>
+                    <strong id="storage-total">—</strong>
+                  </div>
+                </div>
+                <div class="progress storage-bar" id="storage-bar" role="progressbar" aria-label="Library disk usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                  <div class="progress__bar storage-bar__fill" id="storage-bar-fill"></div>
+                </div>
+                <p class="storage-library">Library <span id="library-label">—</span></p>
+              </div>
+            </section>
+          </div>
+
+          <section class="card recent-card" aria-labelledby="recent-title">
+            <header class="card__header">
+              <div>
+                <h2 class="card__title" id="recent-title">Recent uploads</h2>
+                <p class="card__subtitle">The latest jobs recorded by the host.</p>
+              </div>
+              <div class="card__actions">
+                <a class="btn btn--ghost btn--sm" href="/settings">Manage settings</a>
+              </div>
+            </header>
+            <div class="card__body">
+              <div class="table-wrap" id="recent-jobs-table">
+                <table class="table table--compact" aria-label="Recent uploads">
+                  <thead>
+                    <tr>
+                      <th scope="col">File</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Stage</th>
+                      <th scope="col">Progress</th>
+                      <th scope="col">Size</th>
+                      <th scope="col">Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody id="recent-jobs-body">
+                    <tr class="table-skeleton" aria-hidden="true">
+                      <td colspan="6"><span class="skeleton skeleton--text"></span></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div class="empty" id="recent-jobs-empty" hidden>
+                  <p class="empty__title">No uploads yet</p>
+                  <p class="empty__text">New jobs will appear here as they are received.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="dashboard-lower-grid">
+            <section class="card activity-feed-card" aria-labelledby="feed-title">
+              <header class="card__header">
+                <div>
+                  <h2 class="card__title" id="feed-title">Recent activity</h2>
+                  <p class="card__subtitle">Latest job events from this host.</p>
+                </div>
+              </header>
+              <div class="card__body">
+                <ul class="activity-list" id="activity-list">
+                  <li class="activity-item activity-item--skeleton" aria-hidden="true">
+                    <span class="skeleton skeleton--text"></span>
+                  </li>
+                  <li class="activity-item activity-item--skeleton" aria-hidden="true">
+                    <span class="skeleton skeleton--text"></span>
+                  </li>
+                  <li class="activity-item activity-item--skeleton" aria-hidden="true">
+                    <span class="skeleton skeleton--text"></span>
+                  </li>
+                </ul>
+                <div class="empty" id="activity-empty" hidden>
+                  <p class="empty__title">No activity yet</p>
+                  <p class="empty__text">Job events will appear here as the pipeline runs.</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="card health-card" aria-labelledby="health-title">
+              <header class="card__header">
+                <div>
+                  <h2 class="card__title" id="health-title">Health</h2>
+                  <p class="card__subtitle">Component checks reported by the host.</p>
+                </div>
+              </header>
+              <div class="card__body">
+                <div class="health-grid" id="health-list">
+                  <div class="health-item" aria-hidden="true">
+                    <span class="skeleton skeleton--text"></span>
+                  </div>
+                  <div class="health-item" aria-hidden="true">
+                    <span class="skeleton skeleton--text"></span>
+                  </div>
+                  <div class="health-item" aria-hidden="true">
+                    <span class="skeleton skeleton--text"></span>
+                  </div>
+                </div>
+                <p class="health-note" id="health-note">Kafka and S3 settings are configured below. Runtime connectivity checks are handled by the pipeline and are not part of this host probe.</p>
+              </div>
+            </section>
+          </div>
+
+          <section class="card config-card" aria-labelledby="config-title">
+            <header class="card__header">
+              <div>
+                <h2 class="card__title" id="config-title">Configuration</h2>
+                <p class="card__subtitle">Active runtime integrations.</p>
+              </div>
+            </header>
+            <div class="card__body">
+              <dl class="config-rows">
+                <div class="config-row">
+                  <dt class="config-row__label">Kafka</dt>
+                  <dd class="config-row__value" id="config-kafka">—</dd>
+                </div>
+                <div class="config-row">
+                  <dt class="config-row__label">S3</dt>
+                  <dd class="config-row__value" id="config-s3">—</dd>
+                </div>
+                <div class="config-row">
+                  <dt class="config-row__label">Workers</dt>
+                  <dd class="config-row__value" id="config-workers">—</dd>
+                </div>
+              </dl>
+            </div>
+          </section>
+        </main>
+
+        <footer class="footer">
+          <span>Stash Host · Node service</span>
+          <span id="footer-version">v0.1.0</span>
+        </footer>
+      </div>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="false"></div>
+    <script type="module" src="/assets/dashboard.js"></script>
+  </body>
+</html>

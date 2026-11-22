@@ -33,11 +33,6 @@ feature set documented in `FlutterStash*.md` and `ReactNativeStashPlan.md`.
 - **Kafka proxy transport** — `kafka_proxy_vercel/` Vercel Function produces
   with the native Confluent client, and the app **polls** `GET /api/messages`
   for upload responses (de-duplication, backoff, token refresh).
-- **Kafka REST transport (fallback)** — Confluent REST Proxy v3 produce (record headers:
-  `X-Message-Version`, `Authorization`, `X-Correlation-Id`, `X-Device-Id`,
-  `X-User-Id`) and v2 consume for upload responses, correlation IDs, status
-  transitions to `Processing`/`Completed`/`Failed`, and dead-letter production
-  when retries are exhausted.
 - **Background upload pass** — the documented 15-minute AppState-aware
   interval (`BackgroundUpload:IntervalMinutes`, max 50 files per run): scan →
   dedup → filter candidates → batch upload → publish → status bookkeeping.
@@ -80,9 +75,8 @@ npx expo export --platform web   # static web build -> dist/
 | Area | Environment variables |
 | --- | --- |
 | Identity | `EXPO_PUBLIC_IDENTITY_API_BASE_URL` (`https://<vercel-project>.vercel.app`; `http://localhost:5102` for local) |
-| Kafka | `EXPO_PUBLIC_KAFKA_BOOTSTRAP_SERVERS`, `EXPO_PUBLIC_KAFKA_USERNAME`, `EXPO_PUBLIC_KAFKA_PASSWORD`, `EXPO_PUBLIC_KAFKA_REST_URL`, `EXPO_PUBLIC_KAFKA_REST_USERNAME`, `EXPO_PUBLIC_KAFKA_REST_PASSWORD`, `EXPO_PUBLIC_KAFKA_CLUSTER_ID`, `EXPO_PUBLIC_KAFKA_PROXY_BASE_URL` |
+| Kafka | `EXPO_PUBLIC_KAFKA_PROXY_BASE_URL` |
 | S3 | `EXPO_PUBLIC_S3_BUCKET`, `EXPO_PUBLIC_S3_REGION`, `EXPO_PUBLIC_S3_ACCESS_KEY_ID`, `EXPO_PUBLIC_S3_SECRET_ACCESS_KEY`, `EXPO_PUBLIC_S3_SESSION_TOKEN`, `EXPO_PUBLIC_S3_ENDPOINT`, `EXPO_PUBLIC_S3_PREFIX`, `EXPO_PUBLIC_S3_FORCE_PATH_STYLE`, `EXPO_PUBLIC_S3_PRESIGN_EXPIRY_SECONDS` |
-| App Insights | `EXPO_PUBLIC_APPINSIGHTS_CONNECTION_STRING` |
 
 Copy `.env.example` to `.env` and fill in real values, then restart the dev server: Expo inlines these variables into the bundle at build time.
 
@@ -112,13 +106,10 @@ Non-secret settings stay in `appconfig.json`:
 | --- | --- |
 | `IdentityApiTimeoutSeconds` | Identity API request timeout |
 | `Kafka.Proxy.*` (except `BaseUrl`) | Proxy polling interval/timeout and page size |
-| `Kafka.RestTimeoutSeconds` | REST proxy request timeout |
 | `Kafka.Topic*` | Upload request/response and dead-letter topics |
-| `Auth.Jwt.*` | Expected token issuer and audience |
 | `Storage.Provider` / `Storage.S3` | Storage provider and S3 defaults |
 | `UploadSettings` | `BatchSize`, `MaxConcurrentBytes`, `MaxRetries`, `MaxFileSizeBytes` |
 | `BackgroundUpload` | `Enabled`, `IntervalMinutes` (15), `MaxFilesPerRun` (50) |
-| `ApplicationInsights.Enabled` | Telemetry flag |
 
 **Never commit `.env`.** `EXPO_PUBLIC_*` values are inlined into the client bundle, so use scoped/limited credentials and rotate anything that was previously committed.
 

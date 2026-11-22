@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase } from './database';
+import { runTransactionAsync, runWriteAsync } from './transactionQueue';
 import { insertFileEventWithDbAsync } from './fileEventRepository';
 import { nowIso } from '../services/retryPolicy';
 import { uuid } from '../utils/id';
@@ -73,7 +74,7 @@ export class OutboxRepository {
     const createdAt = nowIso();
     let inserted = false;
 
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       const result = await db.runAsync(
         `INSERT OR IGNORE INTO outbox_messages (
           id, file_id, correlation_id, message_id, payload, status, attempts,
@@ -149,12 +150,16 @@ export class OutboxRepository {
 
   async resetSendingAsync(): Promise<void> {
     const db = await this.open();
-    await db.runAsync(`UPDATE outbox_messages SET status = 'pending' WHERE status = 'sending'`);
+    await runWriteAsync(
+      db,
+      `UPDATE outbox_messages SET status = 'pending' WHERE status = 'sending'`,
+    );
   }
 
   async claimAsync(id: string): Promise<boolean> {
     const db = await this.open();
-    const result = await db.runAsync(
+    const result = await runWriteAsync(
+      db,
       `UPDATE outbox_messages
        SET status = 'sending', attempts = attempts + 1
        WHERE id = ? AND status = 'pending'`,
@@ -173,7 +178,7 @@ export class OutboxRepository {
     const now = nowIso();
     let applied = false;
     try {
-      await db.withTransactionAsync(async () => {
+      await runTransactionAsync(db, async () => {
         const outboxResult = await db.runAsync(
           `UPDATE outbox_messages
            SET status = 'sent', sent_at = ?, last_error = NULL
@@ -231,7 +236,8 @@ export class OutboxRepository {
    */
   async markSentAsync(id: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `UPDATE outbox_messages
        SET status = 'sent', sent_at = ?, last_error = NULL
        WHERE id = ? AND status = 'sending'`,
@@ -241,7 +247,8 @@ export class OutboxRepository {
 
   async markRetryAsync(id: string, error: string, nextAttemptAt: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `UPDATE outbox_messages
        SET status = 'pending', last_error = ?, next_attempt_at = ?
        WHERE id = ?`,
@@ -251,7 +258,8 @@ export class OutboxRepository {
 
   async markDeadAsync(id: string, error: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `UPDATE outbox_messages
        SET status = 'dead', last_error = ?, next_attempt_at = NULL
        WHERE id = ?`,
@@ -273,7 +281,8 @@ export class OutboxRepository {
 
   async pruneSentAsync(olderThanIso: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `DELETE FROM outbox_messages
        WHERE status = 'sent' AND sent_at IS NOT NULL AND sent_at < ?`,
       [olderThanIso],

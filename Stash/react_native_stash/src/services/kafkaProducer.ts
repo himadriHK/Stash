@@ -1,5 +1,5 @@
 /**
- * Mobile Kafka producer built on the REST transport. Mirrors
+ * Mobile Kafka producer built on the Stash Kafka proxy transport. Mirrors
  * Stash.Maui/Services/KafkaProducer.cs + StashHost.Shared IKafkaProducer.
  */
 import {

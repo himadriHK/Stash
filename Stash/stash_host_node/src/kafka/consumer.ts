@@ -120,6 +120,9 @@ export class KafkaRequestConsumer {
     if (!consumer) throw new Error('Kafka consumer is not connected');
 
     this.running = true;
+    // `@confluentinc/kafka-javascript` resolves `run()` as soon as the fetch
+    // loop starts (unlike KafkaJS, which resolves on stop), so `running` is
+    // tracked here and cleared only by `stop()`/`disconnect()` or a rejection.
     this.runPromise = consumer
       .run({
         eachMessage: async ({ topic, partition, message, heartbeat }) => {
@@ -135,19 +138,27 @@ export class KafkaRequestConsumer {
             headers: decodeHeaders(message.headers),
           };
 
-          if (typeof heartbeat === 'function') await heartbeat();
-          await this.handler(record);
-          const nextOffset = (BigInt(record.offset) + 1n).toString();
-          await consumer.commitOffsets([{ topic, partition, offset: nextOffset }]);
-          this.lastMessageAt = new Date().toISOString();
+          try {
+            if (typeof heartbeat === 'function') await heartbeat();
+            await this.handler(record);
+            const nextOffset = (BigInt(record.offset) + 1n).toString();
+            await consumer.commitOffsets([{ topic, partition, offset: nextOffset }]);
+            this.lastMessageAt = new Date().toISOString();
+            this.lastError = null;
+          } catch (error) {
+            this.lastError = error instanceof Error ? error.message : String(error);
+            this.logger?.error(
+              { error: this.lastError, topic, partition, offset: record.offset },
+              'Kafka message handling failed',
+            );
+            throw error;
+          }
         },
       })
       .catch((error: unknown) => {
         this.lastError = error instanceof Error ? error.message : String(error);
-        this.logger?.error({ error }, 'Kafka consumer run loop stopped');
-      })
-      .finally(() => {
         this.running = false;
+        this.logger?.error({ error }, 'Kafka consumer run loop stopped');
       });
 
     await Promise.resolve();
@@ -166,6 +177,7 @@ export class KafkaRequestConsumer {
   }
 
   async stop(): Promise<void> {
+    this.running = false;
     if (this.consumer) {
       try {
         await this.consumer.disconnect();
@@ -187,6 +199,7 @@ export class KafkaRequestConsumer {
     await this.stop();
     this.consumer = null;
     this.connected = false;
+    this.running = false;
     this.paused = false;
   }
 

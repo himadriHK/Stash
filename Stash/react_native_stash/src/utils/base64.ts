@@ -1,41 +1,9 @@
 /**
- * Minimal UTF-8 → Base64 helper (no native dependencies) used for the Kafka
- * REST Proxy v3 record keys/headers and HTTP Basic auth.
+ * Minimal Base64 helpers (no native dependencies) used for decoding chunked
+ * file reads.
  */
 
 const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-export function utf8Bytes(value: string): Uint8Array {
-  const encoded = encodeURIComponent(value);
-  const bytes = new Uint8Array(encoded.length);
-  let length = 0;
-  for (let i = 0; i < encoded.length; i += 1) {
-    if (encoded[i] === '%') {
-      bytes[length] = parseInt(encoded.slice(i + 1, i + 3), 16);
-      i += 2;
-    } else {
-      bytes[length] = encoded.charCodeAt(i);
-    }
-    length += 1;
-  }
-  return bytes.subarray(0, length);
-}
-
-export function toBase64(value: string): string {
-  const bytes = utf8Bytes(value);
-  let result = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i];
-    const b1 = i + 1 < bytes.length ? bytes[i + 1] : undefined;
-    const b2 = i + 2 < bytes.length ? bytes[i + 2] : undefined;
-
-    result += B64_CHARS[b0 >> 2];
-    result += B64_CHARS[((b0 & 0x03) << 4) | ((b1 ?? 0) >> 4)];
-    result += b1 === undefined ? '=' : B64_CHARS[((b1 & 0x0f) << 2) | ((b2 ?? 0) >> 6)];
-    result += b2 === undefined ? '=' : B64_CHARS[b2 & 0x3f];
-  }
-  return result;
-}
 
 const B64_LOOKUP: Record<string, number> = (() => {
   const table: Record<string, number> = {};

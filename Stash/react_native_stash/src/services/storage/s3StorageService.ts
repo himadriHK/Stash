@@ -123,15 +123,7 @@ export class S3StorageService implements StorageProvider {
       } catch {
         // Fall through to the upload path.
       }
-      // A known content hash signs the exact bytes; a mismatch is rejected by
-      // S3 instead of silently storing a changed file.
-      const contentHash = source.contentHash?.trim().toLowerCase();
-      const url = this.presign(
-        config,
-        'PUT',
-        this.keyFor(canonicalPath),
-        contentHash && contentHash.length > 0 ? contentHash : undefined,
-      );
+      const url = this.presign(config, 'PUT', this.keyFor(canonicalPath));
       await putFileToPresignedUrlAsync(url, source);
       return canonicalPath;
     } catch (error) {
@@ -287,7 +279,6 @@ export class S3StorageService implements StorageProvider {
     config: ResolvedS3Config,
     method: 'GET' | 'PUT' | 'HEAD' | 'DELETE',
     key: string,
-    payloadHash?: string,
   ): string {
     return presignS3Url(
       {
@@ -303,7 +294,6 @@ export class S3StorageService implements StorageProvider {
       key,
       config.presignExpirySeconds,
       new Date(),
-      payloadHash,
     );
   }
 }

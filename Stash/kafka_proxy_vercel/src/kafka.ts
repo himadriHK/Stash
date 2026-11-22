@@ -77,7 +77,9 @@ export class ConfluentKafkaGateway implements KafkaGateway {
         kafkaJS: {
           clientId: this.config.clientId,
           brokers: this.config.brokers,
-          ssl: this.config.securityProtocol !== 'PLAINTEXT',
+          ssl:
+            this.config.securityProtocol === 'SSL' ||
+            this.config.securityProtocol === 'SASL_SSL',
           ...(sasl ? { sasl } : {}),
           connectionTimeout: this.config.connectionTimeoutMs,
           requestTimeout: this.config.requestTimeoutMs,

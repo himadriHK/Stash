@@ -2,10 +2,11 @@
  * AWS Signature V4 query-string presigning for S3.
  *
  * React Native/Hermes has no WebCrypto, so the HMAC chain is computed with the
- * pure-JS `js-sha256` package. Presigned URLs sign only the `host` header.
- * GET/HEAD/DELETE keep `UNSIGNED-PAYLOAD`; uploads sign the real SHA-256 the
- * client is sending so S3 rejects a body that no longer matches the local
- * content hash (integrity check for the presigned PUT).
+ * pure-JS `js-sha256` package. Presigned URLs sign only the `host` header and
+ * use `UNSIGNED-PAYLOAD` for every method: SigV4 query-string presigning has no
+ * payload to hash when the URL is minted, and AWS/S3-compatible services reject
+ * a presigned request whose canonical request carries a real payload hash.
+ * Integrity comes from the content hash in the object key instead.
  */
 import { sha256 } from 'js-sha256';
 
@@ -24,7 +25,6 @@ const MAX_EXPIRY_SECONDS = 604800;
 const ALGORITHM = 'AWS4-HMAC-SHA256';
 const SERVICE = 's3';
 const UNSIGNED_PAYLOAD = 'UNSIGNED-PAYLOAD';
-const PAYLOAD_HASH_PATTERN = /^[0-9a-f]{64}$/i;
 
 interface ParsedEndpoint {
   protocol: string;
@@ -105,24 +105,11 @@ function buildCanonicalQuery(parameters: QueryParameter[]): string {
 }
 
 /**
- * Validates an optional payload hash. Uploads pass the local content hash;
- * other methods keep the default unsigned payload.
- */
-function resolvePayloadHash(payloadHash: string): string {
-  if (!payloadHash || payloadHash === UNSIGNED_PAYLOAD) {
-    return UNSIGNED_PAYLOAD;
-  }
-  if (!PAYLOAD_HASH_PATTERN.test(payloadHash)) {
-    throw new Error('S3 payload hash must be a 64-character hexadecimal SHA-256 digest.');
-  }
-  return payloadHash.toLowerCase();
-}
-
-/**
  * Builds a presigned S3 URL for a single object.
  *
- * `expiresSeconds` is clamped to the SigV4 1..604800 range. `payloadHash` is
- * the SHA-256 of the request body for uploads; the default signs no payload.
+ * `expiresSeconds` is clamped to the SigV4 1..604800 range. The canonical
+ * request always uses `UNSIGNED-PAYLOAD`, as SigV4 query-string presigning
+ * requires.
  */
 export function presignS3Url(
   config: S3SigningConfig,
@@ -130,7 +117,6 @@ export function presignS3Url(
   objectKey: string,
   expiresSeconds: number,
   now: Date = new Date(),
-  payloadHash: string = UNSIGNED_PAYLOAD,
 ): string {
   const endpoint = config.Endpoint?.trim()
     ? parseEndpoint(config.Endpoint.trim())
@@ -168,7 +154,7 @@ export function presignS3Url(
     canonicalQuery,
     `host:${host}\n`,
     'host',
-    resolvePayloadHash(payloadHash),
+    UNSIGNED_PAYLOAD,
   ].join('\n');
 
   const stringToSign = [ALGORITHM, amzDate, scope, sha256(canonicalRequest)].join('\n');

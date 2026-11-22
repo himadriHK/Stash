@@ -13,9 +13,7 @@
 import rawConfig from './appconfig.json';
 
 export interface KafkaProxyConfig {
-  /** Route produce/consume through the Stash Kafka proxy (Vercel Function). */
-  Enabled: boolean;
-  /** Base URL of the deployed proxy, e.g. https://stash-kafka-proxy.vercel.app. */
+  /** Base URL of the Stash Kafka proxy, e.g. https://stash-kafka-proxy.vercel.app. */
   BaseUrl: string;
   /** How long the app waits between polls once a poll comes back empty. */
   PollIntervalMs: number;
@@ -26,16 +24,6 @@ export interface KafkaProxyConfig {
 }
 
 export interface KafkaConfig {
-  BootstrapServers: string;
-  Username: string;
-  Password: string;
-  /** Base URL of the Confluent REST Proxy, optionally with a path prefix. */
-  RestUrl: string;
-  RestUsername: string;
-  RestPassword: string;
-  RestTimeoutSeconds: number;
-  /** Optional cluster id for the v3 produce endpoint; discovered when empty. */
-  ClusterId: string;
   TopicUploadRequest: string;
   TopicUploadResponse: string;
   TopicDeadLetter: string;
@@ -64,11 +52,6 @@ export interface StorageConfig {
   S3: S3Config;
 }
 
-export interface JwtConfig {
-  Issuer: string;
-  Audience: string;
-}
-
 export interface UploadSettings {
   BatchSize: number;
   /** Host processing attempts, tracked separately from transfer retries. */
@@ -85,20 +68,13 @@ export interface BackgroundUploadConfig {
   MaxFilesPerRun: number;
 }
 
-export interface ApplicationInsightsConfig {
-  Enabled: boolean;
-  ConnectionString: string;
-}
-
 export interface StashConfig {
   Kafka: KafkaConfig;
   Storage: StorageConfig;
-  Auth: { Jwt: JwtConfig };
   IdentityApiBaseUrl: string;
   IdentityApiTimeoutSeconds: number;
   UploadSettings: UploadSettings;
   BackgroundUpload: BackgroundUploadConfig;
-  ApplicationInsights: ApplicationInsightsConfig;
 }
 
 const resolveEnv = (value: string | undefined, fallback: string): string =>
@@ -130,22 +106,6 @@ export const appConfig: StashConfig = {
   ),
   Kafka: {
     ...rawConfig.Kafka,
-    BootstrapServers: resolveEnv(
-      process.env.EXPO_PUBLIC_KAFKA_BOOTSTRAP_SERVERS,
-      rawConfig.Kafka.BootstrapServers,
-    ),
-    Username: resolveEnv(process.env.EXPO_PUBLIC_KAFKA_USERNAME, rawConfig.Kafka.Username),
-    Password: resolveEnv(process.env.EXPO_PUBLIC_KAFKA_PASSWORD, rawConfig.Kafka.Password),
-    RestUrl: resolveEnv(process.env.EXPO_PUBLIC_KAFKA_REST_URL, rawConfig.Kafka.RestUrl),
-    RestUsername: resolveEnv(
-      process.env.EXPO_PUBLIC_KAFKA_REST_USERNAME,
-      rawConfig.Kafka.RestUsername,
-    ),
-    RestPassword: resolveEnv(
-      process.env.EXPO_PUBLIC_KAFKA_REST_PASSWORD,
-      rawConfig.Kafka.RestPassword,
-    ),
-    ClusterId: resolveEnv(process.env.EXPO_PUBLIC_KAFKA_CLUSTER_ID, rawConfig.Kafka.ClusterId),
     Proxy: {
       ...rawConfig.Kafka.Proxy,
       BaseUrl: resolveEnv(
@@ -195,13 +155,6 @@ export const appConfig: StashConfig = {
       rawConfig.UploadSettings.MaxConcurrentBytes,
     ),
   },
-  ApplicationInsights: {
-    ...rawConfig.ApplicationInsights,
-    ConnectionString: resolveEnv(
-      process.env.EXPO_PUBLIC_APPINSIGHTS_CONNECTION_STRING,
-      rawConfig.ApplicationInsights.ConnectionString,
-    ),
-  },
 };
 
 export function identityApiBaseUrl(): string | null {
@@ -210,14 +163,6 @@ export function identityApiBaseUrl(): string | null {
     return null;
   }
   return trimTrailingSlash(raw);
-}
-
-export function kafkaRestUrl(): string | null {
-  const raw = appConfig.Kafka.RestUrl.trim();
-  if (!raw) {
-    return null;
-  }
-  return trimTrailingSlash(raw) + '/';
 }
 
 /** Proxy base URL, or null when it is unset or still the documented placeholder. */

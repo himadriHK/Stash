@@ -1,0 +1,25 @@
+{
+  "name": "stash-kafka-proxy-vercel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vercel Functions for the Stash app: Identity API and Kafka proxy with @confluentinc/kafka-javascript.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "dev:local": "node --experimental-strip-types scripts/local-server.ts",
+    "postinstall": "node scripts/ensure-kafka-binary.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@confluentinc/kafka-javascript": "^1.11.0",
+    "mongodb": "^6.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -10,7 +10,7 @@ export interface StorageUploadSource {
   name: string;
   mimeType?: string;
   size?: number;
-  /** Lowercase SHA-256 of the file content; signs the upload payload. */
+  /** Lowercase SHA-256 of the file content; used for dedup and the object key. */
   contentHash?: string;
   /** Cancels an in-flight transfer when aborted. */
   signal?: AbortSignal;

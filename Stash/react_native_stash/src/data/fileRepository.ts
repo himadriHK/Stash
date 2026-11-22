@@ -5,6 +5,7 @@
  */
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase, parseJsonColumn } from './database';
+import { runTransactionAsync, runWriteAsync } from './transactionQueue';
 import type { FileEntity } from '../models/fileEntity';
 import { parseUploadStatus, UploadStatus } from '../models/uploadStatus';
 
@@ -230,7 +231,7 @@ export class FileRepository {
   async addAsync(file: FileEntity): Promise<void> {
     const db = await this.open();
     try {
-      await db.runAsync(FILE_INSERT_SQL, toWriteParams(file));
+      await runWriteAsync(db, FILE_INSERT_SQL, toWriteParams(file));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/UNIQUE constraint failed: files\.content_hash/i.test(message)) {
@@ -251,7 +252,7 @@ export class FileRepository {
     }
     const db = await this.open();
     let inserted = 0;
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       for (const file of files) {
         const result = await db.runAsync(
           `INSERT OR IGNORE INTO files (${FILE_INSERT_COLUMNS}) VALUES (${FILE_INSERT_VALUES})`,
@@ -265,7 +266,8 @@ export class FileRepository {
 
   async updateAsync(file: FileEntity): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `UPDATE files SET
         file_name = $file_name, file_path = $file_path, file_size = $file_size,
         content_hash = $content_hash, mime_type = $mime_type,
@@ -296,7 +298,8 @@ export class FileRepository {
    */
   async setOwnershipAsync(id: string, deviceId: string, userId: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `UPDATE files SET device_id = ?, user_id = ?, updated_at = ? WHERE id = ?`,
       [deviceId, userId, new Date().toISOString(), id],
     );
@@ -304,7 +307,7 @@ export class FileRepository {
 
   async deleteAsync(id: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync('DELETE FROM files WHERE id = ?', [id]);
+    await runWriteAsync(db, 'DELETE FROM files WHERE id = ?', [id]);
   }
 }
 

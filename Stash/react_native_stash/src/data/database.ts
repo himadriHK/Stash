@@ -3,6 +3,7 @@
  * `files` (with a unique content hash for deduplication) and `folder_configs`.
  */
 import * as SQLite from 'expo-sqlite';
+import { runTransactionAsync } from './transactionQueue';
 
 const DB_NAME = 'stash.db';
 
@@ -191,7 +192,7 @@ async function migrateFilesStorageTempPathAsync(db: SQLite.SQLiteDatabase): Prom
  * half-applied version marker.
  */
 async function migrateLifecycleAndDeliveryAsync(db: SQLite.SQLiteDatabase): Promise<void> {
-  await db.withTransactionAsync(async () => {
+  await runTransactionAsync(db, async () => {
     await addColumnIfMissingAsync(db, 'files', 'upload_started_at', 'TEXT');
     await addColumnIfMissingAsync(db, 'files', 'processing_started_at', 'TEXT');
     await addColumnIfMissingAsync(db, 'files', 'last_response_at', 'TEXT');
@@ -223,7 +224,7 @@ async function migrateLifecycleAndDeliveryAsync(db: SQLite.SQLiteDatabase): Prom
  * indexes so both install paths converge.
  */
 async function migrateScalingIndexesAsync(db: SQLite.SQLiteDatabase): Promise<void> {
-  await db.withTransactionAsync(async () => {
+  await runTransactionAsync(db, async () => {
     await db.execAsync(
       'CREATE INDEX IF NOT EXISTS idx_files_discovered_at ON files(discovered_at);',
     );

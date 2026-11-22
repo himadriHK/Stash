@@ -22,7 +22,8 @@ This runbook takes a clean Windows machine to a **locally running Stash backend 
 - the **React Native (Expo) UI** in `react_native_stash/` as the only client,
 - the **Identity API** (`StashHost.IdentityApi` locally, or the Vercel function in `kafka_proxy_vercel/`),
 - the **host backend** (`StashHost.Functions`, Durable Functions + Kafka trigger) running locally,
-- **MongoDB**, **Azurite** and a **Kafka REST proxy** running locally,
+- **MongoDB** and **Azurite** running locally, plus the **Stash Kafka proxy**
+  (`kafka_proxy_vercel/`, or the local Node server the setup script starts),
 - and external services: **S3** (client upload staging), **MEGA** (the
   repository backend's staging provider) and **Aiven for Apache Kafka** (broker).
 
@@ -32,12 +33,11 @@ required. The RN client writes to S3 directly with presigned URLs, so no upload 
 part of the client path. The repository backend still stages to MEGA; that is the legacy side of
 the mismatch described above.
 
-> **Why a local Kafka REST proxy?**
-> The React Native client produces with record headers through the **Confluent REST Proxy v3** API
-> (`POST /v3/clusters/{id}/topics/{topic}/records`). Aiven's Karapace REST proxy is **v2-only**, so
-> pointing the app straight at Aiven fails on the v3 route. Running the Confluent REST Proxy
-> container locally against your Aiven cluster gives the app a v3 endpoint while the records still
-> land in your Aiven topics.
+> **Why the Stash Kafka proxy?**
+> The React Native client never talks to Kafka directly. It produces and polls through the
+> **Stash Kafka proxy** (`kafka_proxy_vercel/`, or the local Node server started by
+> `scripts/setup-and-run.mjs`), which holds the broker credentials and filters responses per
+> device/user.
 >
 > **S3 needs no upload bridge.** The RN app presigns a `PUT` with
 > `react_native_stash/src/services/storage/s3Signing.ts` and streams the file to the
@@ -45,6 +45,93 @@ the mismatch described above.
 > The backend must still be taught to read that bucket and accept version 2
 > before its processing loop can consume the new client's messages. The MEGA
 > bridge mentioned later is legacy and is not part of the current client path.
+
+---
+
+## Automated quick start
+
+`scripts/setup-and-run.mjs` (at the Stash repo root: the folder holding `kafka_proxy_vercel/`,
+`stash_host_node/`, `react_native_stash/` and `docs/`) automates most of this runbook:
+
+```bash
+node scripts/setup-and-run.mjs          # interactive
+node scripts/setup-and-run.mjs --help   # every flag
+```
+
+> **Scope.** This automated path runs the **Node host (`stash_host_node`)**, not the legacy .NET
+> `StashHost.Functions` described from §7 on (that part of the runbook is unchanged). It also
+> serves the Identity API and Kafka proxy with a plain Node server instead of `vercel dev`; the
+> deployed Vercel functions are unchanged.
+
+What it does:
+
+1. **Prompts** for all required configuration and writes gitignored `.env` files for the
+   selected projects, backing up any existing file as `.env.bak-<timestamp>`:
+   - `kafka_proxy_vercel/.env` — Kafka, Mongo, JWT, CORS, host/port
+   - `stash_host_node/.env` — bind/port, DB path, library root, Kafka, S3, JWT
+   - `react_native_stash/.env` — identity/proxy URLs, S3 public config, `EXPO_DEV_PORT`
+   Disabling Kafka/S3 only flips `KAFKA_ENABLED`/`S3_ENABLED` to `false`; existing
+   broker/S3 values (and Expo `EXPO_PUBLIC_S3_*`) are preserved. Kafka protocol and
+   mechanism are validated, and credentials are written only for `SASL*` protocols.
+   Existing secret defaults for the JWT signing key, Kafka password, S3 access
+   key/secret/session token, and MongoDB URI show `[set]`; characters typed at the
+   prompt are still echoed visibly (readline limitation).
+2. **Installs** dependencies and runs the build gates for the selected projects:
+   `kafka_proxy_vercel` typecheck, `stash_host_node` build, Expo typecheck.
+3. **Launches** the services, waits for health checks, and cleans up on Ctrl+C:
+   - Identity API + Kafka proxy — started directly as
+     `node --experimental-strip-types scripts/local-server.ts` in `kafka_proxy_vercel`
+     (`npm run dev:local` is the same command) on `http://localhost:3000` (plain Node
+     server, no Vercel CLI/login; routes `/api/health`, `/api/auth/health`, `/api/messages`).
+     It caps streamed bodies via `MAX_BODY_BYTES` (default 1 MiB, clamped 1 KiB–8 MiB),
+     returns HTTP 413 over the cap, and on shutdown closes connections and force-exits
+     even after Mongo/Kafka clients exist.
+   - Node host — `stash_host_node` on `http://localhost:8080` (`/` dashboard,
+     `/settings`, `/api/health`, `/api/dashboard/stream`); runs `npm start` when
+     `dist/server/index.js` exists, otherwise `npm run dev`
+   - Expo UI — web on `http://localhost:8081`, or `--platform=android|ios`
+
+After the host starts, open the dashboard at `http://localhost:8080/` (or
+`http://localhost:<hostPort>/` when the port was changed); settings are at
+`/settings`. The settings page writes `stash_host_node/.env` atomically (keeping
+`.env.bak`) and requires a host restart for every setting except `LOG_LEVEL`,
+which applies immediately. `DASHBOARD_AUTH_ENABLED=true` (with a user and a
+>=12-character password) adds HTTP Basic auth for the UI and APIs; `/health/live`
+stays open. The dashboard updates live over SSE (`/api/dashboard/stream`, about
+every 2 seconds), and its health card reports `database`, `temp_dir`, and `config`;
+Kafka/S3 connectivity is handled by the pipeline, not the host probe.
+
+Health checks report any 2xx as ok, a reachable non-2xx as `unhealthy (HTTP <status>)`
+for the proxy, host, and Expo, and no response within the timeout as `timeout`; they
+never stop services. `--only` limits all phases — env files, installs, build checks,
+host directory creation, Mongo readiness, and services — not just which services start.
+
+Duplicate ports among selected services are rejected, and each selected port is checked
+to be free before launch (failure is a clear pre-launch error; `--dry-run` prints the
+planned checks). Proxy/host ports persist as `PORT`; the Expo port is stored as
+`EXPO_DEV_PORT` (setup metadata) and passed to Expo via `--port`, and the default CORS
+origin is derived from it. The final summary prints the host dashboard URL plus
+`http://localhost:<expoPort>`, matching CORS and the RN base URLs.
+
+When MongoDB is unreachable, Docker is offered only for local hosts (`localhost`,
+`127.0.0.1`, `::1`); remote hosts get a warning. The container publishes on loopback
+only (`-p 127.0.0.1:<port>:27017`), so it is not exposed on the LAN, and `--yes` never
+starts Docker. Generated `.env` values override ambient shell variables for the launched
+services (the script strips those keys from child environments).
+
+Prerequisites: **Node ≥ 22.18**, npm, Docker (optional, for the local Mongo), and Kafka/S3
+credentials for the full upload flow.
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Preview `.env` values and planned installs/builds/port checks/services; writes and starts nothing. In CI/non-TTY it requires `--yes` |
+| `--yes` | Use existing values/defaults without prompting; disables S3 when credentials are missing and Kafka when no broker is configured (warning; no invented `localhost:9092`); preserves existing credential values; never starts Docker |
+| `--skip-install`, `--skip-build`, `--skip-run` | Skip that phase |
+| `--platform=web\|android\|ios` | Expo target (default `web`) |
+| `--only=proxy,host,expo` | Limit all phases (env files, installs, build checks, host directory creation, Mongo readiness) and services to the listed projects |
+
+Fast rerun once configured: `node scripts/setup-and-run.mjs --skip-install --skip-build`.
+Full details and troubleshooting: [`scripts/README.md`](../scripts/README.md).
 
 ---
 
@@ -56,7 +143,7 @@ the mismatch described above.
 | 2 | Identity API (local .NET or Vercel function) | `dotnet run` or Vercel deployment | `http://localhost:5102` (local) or `https://<vercel-project>.vercel.app` | Register / login / refresh / revoke |
 | 3 | Azurite (Azure Storage emulator) | Docker | `127.0.0.1:10000-10002` | Durable Functions state, `AzureWebJobsStorage` |
 | 4 | StashHost.Functions | `dotnet run` (Core Tools host) | `http://localhost:7071` | Kafka trigger + Durable orchestration + `/api/health` |
-| 5 | Kafka REST proxy (Confluent) | Docker | `http://localhost:8082` | RN produce (v3) and consume (v2) |
+| 5 | Stash Kafka proxy | Vercel function or local Node server | `http://localhost:3000` (local) | RN produce and poll (`/api/messages`) |
 | 6 | Mega REST bridge (legacy, optional) | `node` | `http://localhost:8090` | Only for old MEGA-era app builds; the current S3 client never calls it |
 | 7 | React Native UI | Expo / Metro | `http://localhost:8081` | The client under test |
 | 8 | **Amazon S3 / S3-compatible** (external) | SaaS or self-hosted | bucket endpoint | Client upload staging (new RN client) |
@@ -74,9 +161,9 @@ the mismatch described above.
 │  • produce v2 record       │                key: [Prefix/]temp/uploads/…
 │    to stash.upload.request │
 └─────────┬──────────────────┘
-          │ v3 produce (HTTP)
+          │ POST /api/messages
           ▼
-   Kafka REST proxy (8082) ──► Aiven Kafka ──► StashHost.Functions (7071)
+   Stash Kafka proxy ──► Aiven Kafka ──► StashHost.Functions (7071)
                                                  │ Repository host today:
                                                  │ validator accepts version 1
                                                  │ and megaTempPath only, so it
@@ -88,7 +175,7 @@ the mismatch described above.
                                  Delete temp → Send response
                                                  │
                                                  ▼
-                                   stash.upload.response ──► REST proxy ──► RN consumer
+                                   stash.upload.response ──► Stash proxy ──► RN consumer
                                    (RN sets the local file status)
 ```
 
@@ -132,7 +219,7 @@ Verified on this machine (Windows 11, Git Bash):
 | .NET SDK | **10.0.403** | `dotnet --version` | Both host projects target `net10.0` |
 | Node.js | **24.16.0** | `node -v` | Functions host, Expo, (legacy bridge) |
 | npm | **12.2.0** | `npm -v` | npm ≥ 12 blocks lifecycle scripts by default — see 2.1 |
-| Docker Desktop | **29.9.2** | `docker --version` | MongoDB, Azurite, Kafka REST proxy |
+| Docker Desktop | **29.9.2** | `docker --version` | MongoDB, Azurite |
 | Azure Functions Core Tools | **4.16.0** | `func --version` | Required for Durable + Kafka extensions; **≥ 4.13** for .NET 10 |
 | FFmpeg | **9.0.1** | `ffmpeg -version` | MOV→MP4 conversions (`STASH_FFMPEG_PATH`) |
 | Git Bash / PowerShell | — | — | Examples use Git Bash |
@@ -231,11 +318,9 @@ Git Bash rewrites `/opt/...` inside `docker exec` into `C:/…`. Prefix containe
 
    Repeat for `stash.upload.response` and `stash.dlq` (1 partition is fine for `stash.dlq`).
 7. ACLs, in production terms: the Functions user needs **consume** on `stash.upload.request` and
-   `stash.dlq`, **produce** on `stash.upload.response` and `stash.dlq`; the REST proxy user (also
-   used by the app) needs **produce** on `stash.upload.request`/`stash.dlq` and **consume** on
+   `stash.dlq`, **produce** on `stash.upload.response` and `stash.dlq`; the Stash Kafka proxy's
+   Kafka user needs **produce** on `stash.upload.request`/`stash.dlq` and **consume** on
    `stash.upload.response`. Simplest local arrangement: reuse one service user with all of those.
-8. **Do not** enable Karapace's REST proxy expecting v3 — it is v2-only. We run the Confluent REST
-   Proxy locally instead (§9).
 
 ### 3.2 MEGA (backend staging; legacy relative to the S3 client)
 
@@ -266,6 +351,7 @@ Stash/
 │   ├── src/services/storage/           # S3 provider, SigV4 presigner, transfers
 │   ├── .env                            # secrets/endpoints (create from .env.example)
 │   └── docs/SETUP_AND_USAGE.md         # client-only guide
+├── scripts/                    # setup-and-run.mjs and its README
 └── docs/LOCAL_FULL_STACK_SETUP.md      # this file
 ```
 
@@ -274,7 +360,7 @@ Shared configuration values that **must match in every component**:
 | Value | Identity API (local .NET / Vercel) | Functions | RN app | Effect if it differs |
 |---|---|---|---|---|
 | JWT signing key | `Auth:Jwt:SigningKey` / `JWT_SIGNING_KEY` | `Auth:Jwt:SigningKey` | — | Kafka trigger rejects every message → DLQ |
-| Issuer / audience | `stash-auth` / `stash-app` (local: `Auth:Jwt:Issuer`/`Audience`; Vercel: `JWT_ISSUER`/`JWT_AUDIENCE`) | same | `Auth.Jwt.*` (informational) | JWT validation fails |
+| Issuer / audience | `stash-auth` / `stash-app` (local: `Auth:Jwt:Issuer`/`Audience`; Vercel: `JWT_ISSUER`/`JWT_AUDIENCE`) | same | `—` (the app does not validate issuer/audience) | JWT validation fails |
 | Topic names | — | `KafkaTrigger("stash.upload.request")`, DLQ handler `stash.dlq`, producer `stash.upload.*` | `Kafka.Topic*` | Messages land where nobody listens |
 | Message version | — | validator accepts `1` today | client publishes `2` | v2 requests are rejected until host support lands |
 | S3 bucket/region/prefix | — | needs S3 support for v2 (not implemented) | `Storage.S3.*` | Host cannot read the client's temp object |
@@ -285,9 +371,11 @@ Shared configuration values that **must match in every component**:
 ## 5. Step 1 — MongoDB
 
 ```bash
-docker run -d --name stash-mongo -p 27017:27017 mongo:7
+docker run -d --name stash-mongo -p 127.0.0.1:27017:27017 mongo:7
 docker ps --filter name=stash-mongo --format '{{.Status}}'   # Up … (healthy)
 ```
+
+Publishing on loopback only (`127.0.0.1:27017:27017`) avoids exposing an unauthenticated MongoDB on the LAN.
 
 No initialisation needed: `MongoUserStore` creates the unique email index on startup
 (`users`, `devices`, `refresh_tokens` collections in database `stash`).
@@ -520,63 +608,16 @@ curl -s http://localhost:7071/api/health
 
 ---
 
-## 9. Step 5 — Local Kafka REST proxy in front of Aiven
+## 9. Step 5 — Stash Kafka proxy
 
-The RN client produces with the **v3 records API** (record headers are mandatory — the trigger reads
-the JWT from them) and consumes with the **v2 consumer API**. The Confluent REST Proxy container
-provides both and connects out to Aiven over SASL_SSL.
+The RN client produces and polls through the **Stash Kafka proxy**; it never opens a Kafka
+connection or uses a REST proxy. Deploy `kafka_proxy_vercel/` as described in
+[`kafka_proxy_vercel/README.md`](../kafka_proxy_vercel/README.md), or let
+`scripts/setup-and-run.mjs` start the local Node server (`http://localhost:3000`).
 
-```bash
-docker run -d --name stash-rest \
-  -p 8082:8082 \
-  -e KAFKA_REST_BOOTSTRAP_SERVERS='<host>:<port>' \
-  -e KAFKA_REST_HOST_NAME=localhost \
-  -e KAFKA_REST_LISTENERS=http://0.0.0.0:8082 \
-  -e KAFKA_REST_CLIENT_SECURITY_PROTOCOL=SASL_SSL \
-  -e KAFKA_REST_CLIENT_SASL_MECHANISM=SCRAM-SHA-256 \
-  -e KAFKA_REST_CLIENT_SASL_JAAS_CONFIG='org.apache.kafka.common.security.scram.ScramLoginModule required username="<user>" password="<pass>";' \
-  -e KAFKA_REST_CLIENT_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=https \
-  -e KAFKA_REST_ACCESS_CONTROL_ALLOW_ORIGIN='*' \
-  -e KAFKA_REST_ACCESS_CONTROL_ALLOW_METHODS='*' \
-  -e KAFKA_REST_ACCESS_CONTROL_ALLOW_HEADERS='*' \
-  confluentinc/cp-kafka-rest:7.7.0
-```
-
-* `KAFKA_REST_*` → REST proxy's own settings; `KAFKA_REST_CLIENT_*` → the Kafka client it uses to
-  reach Aiven. If the service still uses Aiven's **project CA** (see §3.1 step 4), mount `ca.pem` and
-  point the Java client at it as a PEM truststore:
-
-  ```bash
-  -v "$PWD/ca.pem:/certs/ca.pem" \
-  -e KAFKA_REST_CLIENT_SSL_TRUSTSTORE_TYPE=PEM \
-  -e KAFKA_REST_CLIENT_SSL_TRUSTSTORE_LOCATION=/certs/ca.pem \
-  ```
-
-  With public CA certificates enabled, the container's normal Java truststore is enough.
-* The `ACCESS_CONTROL_*` trio is what makes the **Expo web** build able to call it from
-  `http://localhost:8081`. Native builds do not need it. Browser-facing credentials are visible to
-  the browser — acceptable on a dev box, not in production.
-* Use a dedicated port that does not clash with Karapace (8082 is the REST proxy's own default).
-
-Verify the two routes the app uses:
-
-```bash
-# v3 cluster discovery (the app caches cluster_id, or you can pin Kafka.ClusterId)
-curl -s http://localhost:8082/v3/clusters | head -c 200
-# {"kind":"KafkaClusterList",…"cluster_id":"5L6g3nShT-eMCtK--X86sw"…}
-
-# v3 produce with a base64 BINARY key and base64 headers — exactly what the app sends
-curl -s -X POST "http://localhost:8082/v3/clusters/$CID/topics/stash.upload.request/records" \
-  -H 'Content-Type: application/json' \
-  --data '{"key":{"type":"BINARY","data":"<base64 sha256>"},
-           "value":{"type":"JSON","data":{"fileId":"<sha256>","…":"…"}},
-           "headers":[{"name":"Authorization","value":"<base64 Bearer …>"},
-                      {"name":"X-Correlation-Id","value":"<base64 …>"}]}'
-# {"error_code":200,…}   ← 200 means success; the client treats non-zero as failure
-```
-
-A successful v3 produce returns `error_code: 200` (Confluent uses HTTP-style codes here). The RN
-transport only accepts `0`, so it treats this success as a failure — see limitation **L1**.
+Point the app at it with `EXPO_PUBLIC_KAFKA_PROXY_BASE_URL` (or `Kafka.Proxy.BaseUrl` in
+`appconfig.json`). The proxy's `/api/messages` routes require the Stash access token; broker
+credentials stay in the proxy's environment.
 
 ---
 
@@ -630,23 +671,22 @@ The app reads non-secret defaults from `react_native_stash/src/config/appconfig.
 The S3 keys are documented in detail in
 [`react_native_stash/docs/SETUP_AND_USAGE.md` §4.4](../react_native_stash/docs/SETUP_AND_USAGE.md#44-storage-s3).
 
-The checked-in `appconfig.json` has the S3 shape below (set `Kafka.RestUrl` to the local proxy for
-this runbook); secrets are normally supplied via `.env`:
+The checked-in `appconfig.json` has the shape below (set `Kafka.Proxy.BaseUrl` to the proxy origin
+for this runbook); secrets are normally supplied via `.env`:
 
 ```json
 {
   "Kafka": {
-    "BootstrapServers": "",
-    "Username": "",
-    "Password": "",
-    "RestUrl": "http://localhost:8082",
-    "RestUsername": "",
-    "RestPassword": "",
-    "RestTimeoutSeconds": 30,
-    "ClusterId": "",
     "TopicUploadRequest": "stash.upload.request",
     "TopicUploadResponse": "stash.upload.response",
-    "TopicDeadLetter": "stash.dlq"
+    "TopicDeadLetter": "stash.dlq",
+    "Proxy": {
+      "BaseUrl": "http://localhost:3000",
+      "PollIntervalMs": 15000,
+      "PollTimeoutMs": 8000,
+      "MaxRecordsPerPoll": 50,
+      "RequestTimeoutSeconds": 45
+    }
   },
   "Storage": {
     "Provider": "S3",
@@ -662,21 +702,17 @@ this runbook); secrets are normally supplied via `.env`:
       "PresignExpirySeconds": 3600
     }
   },
-  "Auth": { "Jwt": { "Issuer": "stash-auth", "Audience": "stash-app" } },
   "IdentityApiBaseUrl": "http://localhost:5102",
   "IdentityApiTimeoutSeconds": 30,
   "UploadSettings": { "BatchSize": 10, "MaxRetries": 3, "MaxFileSizeBytes": 524288000 },
-  "BackgroundUpload": { "Enabled": true, "IntervalMinutes": 15, "MaxFilesPerRun": 50 },
-  "ApplicationInsights": { "Enabled": false, "ConnectionString": "" }
+  "BackgroundUpload": { "Enabled": true, "IntervalMinutes": 15, "MaxFilesPerRun": 50 }
 }
 ```
 
 | Key | Local value | Notes |
 |---|---|---|
 | `IdentityApiBaseUrl` | `http://localhost:5102` | no trailing slash needed |
-| `Kafka.RestUrl` | `http://localhost:8082` | the app appends `/v3/...` and `/consumers/...` |
-| `Kafka.RestUsername/Password` | empty | the local proxy has no Basic auth; only set if you add one |
-| `Kafka.ClusterId` | empty | discovered from `GET /v3/clusters`; pin it to skip discovery |
+| `Kafka.Proxy.BaseUrl` | `http://localhost:3000` | Stash Kafka proxy origin; all produce/poll calls go here |
 | `Storage.Provider` | `S3` | the only supported provider |
 | `Storage.S3.Bucket` | your bucket | empty makes uploads fail with “Amazon S3 is not configured” |
 | `Storage.S3.Region` | `us-east-1` (AWS default) | must match the bucket's region |
@@ -686,13 +722,13 @@ this runbook); secrets are normally supplied via `.env`:
 | `Storage.S3.ForcePathStyle` | `false` | `true` for MinIO and servers that require path-style |
 | `Storage.S3.Prefix` | empty | optional key prefix |
 | `Storage.S3.PresignExpirySeconds` | `3600` | presigned URL lifetime (1–604800) |
-| `BootstrapServers`/`Username`/`Password` | empty | the app never opens a native Kafka connection |
 
-Recommended `.env` for the local UI (secrets stay out of `appconfig.json`):
+Recommended `.env` for the local UI (the setup script writes these values into
+`appconfig.json` as well; keep real credentials out of commits):
 
 ```bash
 EXPO_PUBLIC_IDENTITY_API_BASE_URL=http://localhost:5102
-EXPO_PUBLIC_KAFKA_REST_URL=http://localhost:8082
+EXPO_PUBLIC_KAFKA_PROXY_BASE_URL=http://localhost:3000
 EXPO_PUBLIC_S3_BUCKET=<bucket>
 EXPO_PUBLIC_S3_REGION=us-east-1
 EXPO_PUBLIC_S3_ACCESS_KEY_ID=<access key>
@@ -722,9 +758,8 @@ Open `http://localhost:8081`. `metro.config.js` already adds `.wasm` to `assetEx
 `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy` headers that `expo-sqlite` needs on web.
 
 Native builds (device on the same LAN) need LAN URLs instead of `localhost` —
-`IdentityApiBaseUrl: http://192.168.x.y:5102` and `Kafka.RestUrl: http://192.168.x.y:8082`, and the
-REST proxy must listen on `0.0.0.0`
-(it does; just publish the port). Start MongoDB/Azurite/Functions/Identity with the same LAN binding
+`IdentityApiBaseUrl: http://192.168.x.y:5102` and `Kafka.Proxy.BaseUrl: http://192.168.x.y:3000`, and the
+proxy must be reachable from the device. Start MongoDB/Azurite/Functions/Identity with the same LAN binding
 (`--urls http://0.0.0.0:5102`) and allow the Windows Firewall prompt.
 
 For a device, the S3 bucket/endpoint must also be reachable from the phone. AWS endpoints are public;
@@ -829,12 +864,8 @@ REG=$(curl -s -X POST http://localhost:5102/api/auth/register -H 'Content-Type: 
   -d "{\"email\":\"smoke-$DEV@example.com\",\"password\":\"Password123!\",\"deviceId\":\"$DEV\"}")
 echo "$REG" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const r=JSON.parse(d);console.log('user',r.userId,'device',r.deviceId)})"
 
-# 3) REST proxy reachability (v3 discovery + v2 consumer create)
-CID=$(curl -s http://localhost:8082/v3/clusters | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).data[0].cluster_id))")
-echo "cluster $CID"
-curl -s -o /dev/null -w 'consumer-create=%{http_code}\n' -X POST http://localhost:8082/consumers/smoke-group \
-  -H 'Content-Type: application/vnd.kafka.v2+json' \
-  -d '{"name":"smoke","format":"json","auto.offset.reset":"earliest","auto.commit.enable":"true"}'
+# 3) Stash Kafka proxy health
+curl -s http://localhost:3000/api/health
 ```
 
 The S3 step is exercised by the app itself: it presigns a `PUT` and writes to the configured bucket,
@@ -862,7 +893,6 @@ No live S3 upload is performed by this runbook, and the repository host does not
 | Functions: `Failed to resolve 'kafka.dev.aivencloud.com'` | placeholder broker | set `Kafka:BootstrapServers` to your Aiven host |
 | Functions: `SSL handshake failed` / `certificate verify failed` | broker uses Aiven's project CA, librdkafka trusts only the OS store | enable public CA certificates for the service, or import `ca.pem` into the Windows trusted roots |
 | Functions: `Authentication failed` / SASL errors | SASL not enabled, wrong user, or Kafka 4.x with librdkafka 2.6.0 | enable `kafka_authentication_methods.sasl`, re-copy credentials, see §3.1 step 5 |
-| REST proxy: `Connection to node -1 … failed authentication` | same SASL/CA problem on the Java client side | check `KAFKA_REST_CLIENT_SASL_JAAS_CONFIG` and the PEM truststore |
 | Functions: `%Kafka:BootstrapServers%` / no trigger | setting missing or empty | keep the setting name exactly as the trigger references it |
 | Orchestration fails immediately with `Download failed … not found` | the host is looking in MEGA for an object the new client wrote to S3, or the host prefix/region is wrong | This is the S3/v2 host gap (§1 warning). The legacy `MegaPathMapper` rule applies only to old MEGA-era clients/bridge builds. |
 | App requests are rejected and land in `stash.dlq` | repository host validator accepts version 1 only | implement S3 + version 2 on the host (see SETUP_AND_USAGE §11) |
@@ -874,36 +904,14 @@ No live S3 upload is performed by this runbook, and the repository host does not
 | App: S3 `403` (signature, access or expired credentials) | wrong secret/region, clock skew, missing bucket permissions, or expired STS token | check credentials/region, device clock, bucket policy and session token |
 | App: S3 `404` / wrong object | bucket/key/region/prefix or endpoint mismatch | verify bucket, `Storage.S3.Prefix`, region and `Endpoint`/`ForcePathStyle` |
 | App web: CORS failure on S3 | bucket has no CORS rule for the Expo origin | allow `PUT`/`GET`/`HEAD` from `http://localhost:8081` |
-| App: *Kafka REST proxy is not configured* | `Kafka.RestUrl` empty | §11 |
-| App: `Kafka REST cluster discovery returned no cluster_id` | talking to Karapace (v2-only) | use the local Confluent proxy (§9) |
-| App upload 404 on `/v3/clusters/...` | same as above | same |
+| App: *Kafka proxy is not configured* | `Kafka.Proxy.BaseUrl` empty | §11 |
 | `docker exec … /opt/kafka/...: no such file` | Git Bash path rewrite | prefix with `//` |
-| Durable runs but no response in the app | v2 JSON consumer fails parsing the hex key | see L2 |
 | FFmpeg conversion fails | FFmpeg not on PATH | set `STASH_FFMPEG_PATH` to the exe, or add it to PATH |
 | Ports already in use | another run | `netstat -ano | grep :5102` → `taskkill //PID <pid> //F` |
 
 ---
 
 ## 16. Known limitations of this local topology
-
-**L1 — The RN transport rejects a successful v3 produce.** `ensureNoRecordError`
-(`react_native_stash/src/services/kafkaRestTransport.ts`) throws whenever the response body has a
-numeric `error_code` that is not `0`, but Confluent returns `{"error_code":200,…}` for success, so
-every successful produce is reported as `Kafka REST produce returned error_code 200`. Records do
-reach Kafka; the app marks the file `Failed` with that message. One-line fix: treat `0` and `200` as
-success. (The MAUI transport has the same shape.)
-
-**L2 — The response consumer cannot parse the host's key.** The v2 consumer is created with
-`format: "json"`, so the REST proxy decodes **both** key and value as JSON. Host responses are keyed
-by the raw 64-character SHA-256, which is not valid JSON, so polling returns
-`{"error_code":40801,"message":"…Unrecognized token 'aaaa…'"}`. The consumer loop recreates the
-consumer every 5 s and never applies a response. Verified against Confluent REST Proxy 7.7.0; with a
-JSON-quoted key (`"abc123"`) the same call succeeds, which isolates the cause to the key format.
-Until the transport consumes with `format: "binary"` (or the host key is JSON-quoted), the app's file
-status stops at `Processing` even though the backend completed the work.
-
-**L3 — Aiven's own REST proxy is not usable.** Karapace implements Confluent REST Proxy v1/v2 only;
-the v3 records API (needed for record headers) is not available there. Hence the local proxy.
 
 **L4 — Flat Mega layout (backend/legacy).** The backend's `MegaPathMapper` encodes the whole logical
 path into a single root-level file name; folders are not created in MEGA. A shared account used by
@@ -915,12 +923,10 @@ client no longer uses this mapping.
 its own, and ignores the `X-Mega-*` headers. Never expose it beyond localhost. The current client
 uploads to S3 and does not call the bridge.
 
-**L6 — Response filtering depends on the transport.** The Vercel Kafka proxy filters
-`stash.upload.response` records to the token's device/user and drops records with no usable
-`deviceId`. This runbook's Confluent REST proxy path has no equivalent server-side filter, so every
-instance can read other devices' records and matches them locally by `fileId`/identity. The gateway
-still reads the shared topic before filtering (read amplification), and offsets commit before the
-client applies a record; an ACK/inbox protocol remains a known gap.
+**L6 — Response filtering and offsets.** The Stash Kafka proxy filters `stash.upload.response`
+records to the token's device/user and drops records with no usable `deviceId`. It still reads the
+shared topic before filtering (read amplification), and offsets commit before the client applies a
+record; an ACK/inbox protocol remains a known gap.
 
 **L7 — Web is a development target.** Expo web works (SQLite via wasm, document picker via Blob
 URIs), but file-system scanning of local folders is only meaningful on Android/iOS. Web uploads also
@@ -952,9 +958,6 @@ reflect the S3 implementation; no live S3 upload is claimed.
 | Identity API against local MongoDB | `/health` 200; register returns tokens with `userId`/`deviceId` claims |
 | Identity API CORS override for `:8081` | `Access-Control-Allow-Origin: http://localhost:8081` present |
 | Functions host via `dotnet run` + Azurite | starts, `/api/health` 200, Kafka & Durable extensions load |
-| Confluent REST proxy v3 discovery/produce | `200` (`error_code: 200`), record persisted |
-| REST proxy v2 consume | works with JSON keys; fails on hex keys (L2) |
-| REST proxy CORS for Expo web | `Access-Control-Allow-Origin` echoed |
 | `dotnet test StashHost.Tests` | 143 passing: local library round-trip/overwrite/traversal, `StorePermanentActivity` writing a real photo under a temp root, dedup seeing the stored file |
 | `npx tsc --noEmit` in `react_native_stash` | passed with exit 0 after the S3 migration |
 | RN dependency audit | lockfile regenerated with `npm install --package-lock-only`; no `react-native-mega` reference in `package.json` or `package-lock.json`; storage dependencies remain `js-sha256` + `expo-file-system` |
@@ -965,7 +968,7 @@ reflect the S3 implementation; no live S3 upload is claimed.
 | megajs login path (legacy MEGA) | backend/legacy probe; not part of the current S3 client |
 
 **Not verified here** — requires your credentials: Aiven connectivity from the Functions host and the
-REST proxy, a real S3 upload/download/processing, and a host that reads S3 and accepts version 2.
+Stash Kafka proxy, a real S3 upload/download/processing, and a host that reads S3 and accepts version 2.
 Therefore the full S3 upload → convert → store → response loop is not verified. The local library path
 itself needs no credentials; it is covered by the test suite above (on the backend's MEGA/version-1 path).
 
@@ -1240,7 +1243,7 @@ the host must be updated before the new client can complete the flow.
 services:
   mongo:
     image: mongo:7
-    ports: ["27017:27017"]
+    ports: ["127.0.0.1:27017:27017"]  # loopback only, no LAN exposure
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite
@@ -1267,3 +1270,4 @@ services:
 
 Put `KAFKA_BOOTSTRAP`, `KAFKA_USER`, `KAFKA_PASSWORD` in a local `.env` (never commit it), then
 `docker compose up -d` before starting the identity API and the Functions host.
+

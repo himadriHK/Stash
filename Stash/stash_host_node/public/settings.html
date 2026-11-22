@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Settings &mdash; Stash Host</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/assets/styles.css">
+    <link rel="stylesheet" href="/assets/settings.css">
+    <script type="module" src="/assets/settings.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="sidebar__brand" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z"></path>
+              <path d="M4 7.5 12 12l8-4.5"></path>
+              <path d="M12 12v9"></path>
+            </svg>
+          </span>
+          <span>Stash Host</span>
+        </a>
+
+        <nav class="sidebar__nav" aria-label="Primary">
+          <a class="nav__link" href="/">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+            </svg>
+            <span>Dashboard</span>
+          </a>
+          <a class="nav__link nav__link--active" href="/settings" aria-current="page">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.4.34.75.65 1 .3.26.68.4 1.08.4H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"></path>
+            </svg>
+            <span>Settings</span>
+          </a>
+        </nav>
+
+        <div class="sidebar__footer">
+          <span>v0.1.0</span>
+          <span>Node service</span>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div>
+            <h1 class="topbar__title">Settings</h1>
+            <span class="topbar__meta">Stash Host &middot; Node service</span>
+          </div>
+
+          <div class="topbar__actions">
+            <span class="chip">Host configuration</span>
+          </div>
+        </header>
+
+        <main class="page settings-page" id="main-content" tabindex="-1">
+          <div class="page-header settings-page-header">
+            <div>
+              <h2 class="page-title">Settings</h2>
+              <p class="page-subtitle">Configure the Stash host. Changes are saved to the .env file.</p>
+            </div>
+
+            <dl class="settings-env" aria-label="Environment files">
+              <div class="settings-env__item">
+                <dt>Environment file</dt>
+                <dd class="mono" id="env-file">.env</dd>
+              </div>
+              <div class="settings-env__item">
+                <dt>Backup file</dt>
+                <dd class="mono" id="backup-file">No backup yet</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="settings-banners">
+            <div class="banner banner--warn" id="pending-banner" role="status" hidden>
+              <p class="banner__title">Saved changes pending restart</p>
+              <p class="banner__body">These keys are saved but require a host restart: <span class="mono" id="pending-keys"></span></p>
+            </div>
+
+            <div class="banner banner--warn" id="restart-banner" role="status" hidden>
+              <p class="banner__title">Restart required</p>
+              <p class="banner__body">Restart keys: <span class="mono" id="restart-keys"></span></p>
+              <p class="banner__body" id="restart-command">Stop the host (Ctrl+C), then run npm run dev (development) or npm start (built).</p>
+            </div>
+
+            <div class="banner banner--success" id="applied-banner" role="status" hidden>
+              <p class="banner__title">Applied without restart</p>
+              <p class="banner__body">These keys took effect immediately: <span class="mono" id="applied-keys"></span></p>
+            </div>
+
+            <div class="banner banner--warn" id="warnings-banner" role="status" hidden>
+              <p class="banner__title">Warnings</p>
+              <ul class="settings-warning-list" id="warnings-list"></ul>
+            </div>
+
+            <div class="banner banner--error" id="settings-error" role="alert" hidden>
+              <p class="banner__title" id="settings-error-title">Unable to load settings</p>
+              <p class="banner__body" id="settings-error-message">Something went wrong.</p>
+              <div class="banner__actions">
+                <button class="btn btn--sm" id="settings-retry" type="button">Retry</button>
+              </div>
+            </div>
+          </div>
+
+          <section class="card settings-explainer" aria-labelledby="restart-explainer-title">
+            <span class="settings-explainer__mark" aria-hidden="true">!</span>
+            <div>
+              <h2 class="settings-explainer__title" id="restart-explainer-title">Restart required</h2>
+              <p class="settings-explainer__text">All settings except Log level require a host restart. Stop the host with Ctrl+C, then run npm run dev or npm start.</p>
+            </div>
+          </section>
+
+          <section class="toolbar settings-toolbar" aria-label="Search and filter settings">
+            <div class="settings-search">
+              <label class="field__label" for="settings-search">Search settings</label>
+              <input
+                class="input"
+                id="settings-search"
+                type="search"
+                placeholder="Search by key, label, or description"
+                autocomplete="off"
+                spellcheck="false"
+                aria-describedby="settings-count"
+                aria-controls="settings-groups"
+              >
+            </div>
+            <p class="settings-count" id="settings-count" role="status" aria-live="polite">Loading settings&hellip;</p>
+            <div class="settings-toolbar-actions">
+              <button class="btn btn--ghost btn--sm" id="expand-all" type="button" aria-controls="settings-groups">Expand all</button>
+              <button class="btn btn--ghost btn--sm" id="collapse-all" type="button" aria-controls="settings-groups">Collapse all</button>
+            </div>
+          </section>
+
+          <div class="settings-loading" id="settings-loading" aria-hidden="true">
+            <span class="skeleton settings-loading__card"></span>
+            <span class="skeleton settings-loading__card"></span>
+            <span class="skeleton settings-loading__card"></span>
+          </div>
+
+          <div class="settings-groups" id="settings-groups"></div>
+
+          <div class="card empty settings-empty" id="settings-empty" hidden>
+            <span class="empty__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"></circle>
+                <path d="m20 20-3.5-3.5"></path>
+              </svg>
+            </span>
+            <p class="empty__title" id="settings-empty-title">No matching settings</p>
+            <p class="empty__text" id="settings-empty-text">Try a different search term.</p>
+          </div>
+
+          <div class="save-bar" id="save-bar" role="region" aria-label="Unsaved changes">
+            <p class="save-bar__status" aria-live="polite">
+              <strong id="unsaved-count">0</strong>
+              <span id="unsaved-label">unsaved changes</span>
+            </p>
+            <div class="save-bar__actions">
+              <button class="btn btn--secondary" id="reset-btn" type="button" disabled>Reset</button>
+              <button class="btn btn--primary" id="save-btn" type="button" disabled>
+                <span class="spinner" id="save-spinner" aria-hidden="true" hidden></span>
+                <span id="save-label">Save changes</span>
+              </button>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="false"></div>
+  </body>
+</html>
+
+
+
+

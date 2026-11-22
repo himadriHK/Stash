@@ -232,7 +232,7 @@ export class KafkaProxyTransport implements KafkaTransport {
   /**
    * Polls the proxy until the signal is aborted.
    *
-   * `groupId` is validated for parity with the REST transport; the proxy derives
+   * `groupId` is validated against the transport contract; the proxy derives
    * the effective consumer group from the access token.
    */
   async consumeAsync(

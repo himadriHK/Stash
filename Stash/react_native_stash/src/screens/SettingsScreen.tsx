@@ -9,7 +9,7 @@ import { AppButton } from '../components/AppButton';
 import { NoteText, ScreenTitle } from '../components/FormText';
 import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
-import { appConfig, identityApiBaseUrl, kafkaProxyUrl, kafkaRestUrl } from '../config/appConfig';
+import { appConfig, identityApiBaseUrl, kafkaProxyUrl } from '../config/appConfig';
 import { useTheme, type ThemeMode } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes } from '../theme/typography';
 import {
@@ -254,13 +254,7 @@ export function SettingsScreen() {
               : String(appConfig.BackgroundUpload.MaxFilesPerRun)
           }
         />
-        <SettingsRow
-          label={appConfig.Kafka.Proxy.Enabled && kafkaProxyUrl() ? 'Kafka proxy' : 'Kafka REST proxy'}
-          value={
-            (appConfig.Kafka.Proxy.Enabled && kafkaProxyUrl() ? kafkaProxyUrl() : kafkaRestUrl()) ??
-            'Not configured'
-          }
-        />
+        <SettingsRow label="Kafka proxy" value={kafkaProxyUrl() ?? 'Not configured'} />
         <SettingsRow label="Upload request topic" value={appConfig.Kafka.TopicUploadRequest} />
         <SettingsRow label="Upload response topic" value={appConfig.Kafka.TopicUploadResponse} />
         <SettingsRow label="Dead letter topic" value={appConfig.Kafka.TopicDeadLetter} />

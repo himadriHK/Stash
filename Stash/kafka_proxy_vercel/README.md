@@ -193,6 +193,14 @@ npm test
 npx vercel dev       # serves http://localhost:3000
 ```
 
+`npm run dev:local` is the recommended local option. It runs a plain Node HTTP
+server that serves the same routes at `http://127.0.0.1:3000` (override with
+`HOST` and `PORT`) and needs neither `vercel dev` nor a Vercel login/link.
+`/api/auth/*` requires `MONGODB_URI` and `JWT_SIGNING_KEY`; `/api/messages`
+requires the Kafka variables. The server lazy-loads the native Kafka binding, so
+`/api/health` and `/api/auth/health` still start without a broker; only
+broker-backed `/api/messages` calls fail.
+
 `npm install` may report that npm blocked `@confluentinc/kafka-javascript`'s
 install script (npm 11+). `scripts/ensure-kafka-binary.mjs` then downloads the
 prebuilt binding itself; if it cannot, run `npm rebuild @confluentinc/kafka-javascript`.
@@ -236,7 +244,7 @@ Then point the app at the deployment:
   (for example `https://stash-proxy.vercel.app`; no trailing slash is needed).
   Rebuild the app because `EXPO_PUBLIC_*` values are inlined at build time.
 - Kafka proxy: in `react_native_stash/src/config/appconfig.json` set
-  `Kafka.Proxy.BaseUrl` to the deployment URL and `Kafka.Proxy.Enabled` to `true`.
+  `Kafka.Proxy.BaseUrl` to the deployment URL.
 
 `JWT_SIGNING_KEY`, `JWT_ISSUER`, and `JWT_AUDIENCE` must match the Kafka proxy
 and any host still validating tokens. The Vercel Identity API is the deployed
@@ -331,7 +339,6 @@ that the project's Node version matches a prebuilt ABI (Node 22 is set in
   and drops records with no usable `deviceId`. The gateway can still read other
   devices' records before dropping them, so read amplification remains.
 - No push/websockets — the requirement is polling.
-- The app's direct REST transport is kept as a fallback for local dev setups.
 
 ## Layout
 

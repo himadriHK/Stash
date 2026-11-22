@@ -1,6 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { appConfig } from '../config/appConfig';
 import { getDatabase } from '../data/database';
+import { runTransactionAsync } from '../data/transactionQueue';
 import {
   FileRepository,
   isTerminalStatus,
@@ -65,7 +66,7 @@ export class FileLifecycleService {
   async markUploadingAsync(fileId: string, storageTempPath: string): Promise<boolean> {
     const db = await this.open();
     let applied = false;
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       const fromStatus = await readStatusAsync(db, fileId);
       const now = nowIso();
       const result = await db.runAsync(
@@ -98,7 +99,7 @@ export class FileLifecycleService {
   async markUploadedAsync(fileId: string, storageTempPath: string): Promise<boolean> {
     const db = await this.open();
     let applied = false;
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       const now = nowIso();
       const result = await db.runAsync(
         `UPDATE files SET
@@ -134,7 +135,7 @@ export class FileLifecycleService {
       ? Math.max(0, Math.floor(opts.maxRetries as number))
       : Math.max(0, Math.floor(appConfig.UploadSettings.MaxRetries));
     let applied = false;
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       const row = await db.getFirstAsync<{ status: string; retry_count: number }>(
         'SELECT status, retry_count FROM files WHERE id = ?',
         [fileId],
@@ -178,7 +179,7 @@ export class FileLifecycleService {
   async markLocalMissingAsync(fileId: string, errorMessage: string): Promise<boolean> {
     const db = await this.open();
     let applied = false;
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       const fromStatus = await readStatusAsync(db, fileId);
       const now = nowIso();
       const result = await db.runAsync(
@@ -213,7 +214,7 @@ export class FileLifecycleService {
   ): Promise<boolean> {
     const db = await this.open();
     let applied = false;
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       const fromStatus = await readStatusAsync(db, fileId);
       const now = nowIso();
       const result = await db.runAsync(
@@ -287,7 +288,7 @@ export class FileLifecycleService {
     let recoveredProcessing = 0;
     for (const row of processingRows) {
       let applied = false;
-      await db.withTransactionAsync(async () => {
+      await runTransactionAsync(db, async () => {
         const current = await db.getFirstAsync<{ host_retry_count: number }>(
           `SELECT COALESCE(host_retry_count, 0) AS host_retry_count
            FROM files WHERE id = ? AND status = 'Processing'`,
@@ -417,7 +418,7 @@ export class FileLifecycleService {
     let outcome: ApplyResponseOutcome = 'stale';
 
     if (status === 'COMPLETED') {
-      await db.withTransactionAsync(async () => {
+      await runTransactionAsync(db, async () => {
         const fromStatus = await readStatusAsync(db, file.id);
         const result = await db.runAsync(
           `UPDATE files SET
@@ -466,7 +467,7 @@ export class FileLifecycleService {
       return outcome;
     }
 
-    await db.withTransactionAsync(async () => {
+    await runTransactionAsync(db, async () => {
       const current = await db.getFirstAsync<{ status: string; host_retry_count: number }>(
         `SELECT status, COALESCE(host_retry_count, 0) AS host_retry_count
          FROM files WHERE id = ?`,

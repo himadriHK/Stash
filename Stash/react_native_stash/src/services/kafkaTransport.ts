@@ -1,10 +1,9 @@
 /**
  * Kafka transport contract.
  *
- * The app has two interchangeable implementations: the Confluent REST Proxy
- * transport (`kafkaRestTransport.ts`) and the Vercel proxy transport
- * (`kafkaProxyTransport.ts`, which polls). Producers and the response consumer
- * depend on this interface only.
+ * The app talks to Kafka through the Stash Kafka proxy
+ * (`kafkaProxyTransport.ts`). Producers and the response consumer depend on
+ * this interface only.
  */
 
 export interface KafkaTransportMessage {
@@ -42,12 +41,5 @@ export class KafkaTransportException extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'KafkaTransportException';
-  }
-}
-
-export class KafkaConsumerNotFoundException extends Error {
-  constructor() {
-    super('Kafka REST consumer instance was not found.');
-    this.name = 'KafkaConsumerNotFoundException';
   }
 }

@@ -208,9 +208,13 @@ responses from corrupting state.
   candidates and needs a manual retry or operator inspection.
 - Live S3 transfer, timeout/cancel behavior and native `File.createUploadTask`
   were not device-tested in this environment; only typecheck and the web bundle
-  were verified. The signed payload-hash PUT also needs live validation against
-  the target bucket (and any S3-compatible service) to confirm it accepts a
-  signed SHA-256 instead of `UNSIGNED-PAYLOAD`.
+  were verified. Live validation against the staging bucket showed that a
+  presigned PUT whose canonical request carries the file's SHA-256 is rejected
+  (`403 SignatureDoesNotMatch`), and that sending `x-amz-content-sha256` does not
+  fix it; presigned URLs now use `UNSIGNED-PAYLOAD`, per the SigV4 query-string
+  rules. The staging application key still answers `403 AccessDenied / not
+  entitled` for PUT, HEAD and DELETE, so the key's bucket capabilities must be
+  granted before uploads can succeed end to end.
 
 ---
 
@@ -384,7 +388,6 @@ at-least-once delivery, and close the host S3/v2 gap.
 - `src/services/kafkaConsumer.ts`
 - `src/services/kafkaProducer.ts`
 - `src/services/kafkaProxyTransport.ts`
-- `src/services/kafkaRestTransport.ts`
 - `src/data/fileRepository.ts`
 - `docs/ARCHITECTURE.md`
 - Host repository files (external)
@@ -393,7 +396,7 @@ at-least-once delivery, and close the host S3/v2 gap.
 
 - A response applies only to the originating device/user; foreign responses are
   dropped before they reach SQLite. **Met for the Vercel proxy path and client
-  validation; the direct REST transport has no proxy-side filter.**
+  validation.**
 - No message is ACKed/committed before it is durably applied or inboxed.
   **Not met — blocked on the ACK/inbox protocol.**
 - Redelivered responses are deduplicated across restarts. **Met.**

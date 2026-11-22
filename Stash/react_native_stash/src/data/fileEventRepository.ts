@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase } from './database';
+import { runSerializedAsync } from './transactionQueue';
 import { nowIso } from '../services/retryPolicy';
 import { uuid } from '../utils/id';
 
@@ -111,7 +112,8 @@ export class FileEventRepository {
 
   async recordAsync(input: FileEventInput): Promise<FileEvent> {
     const db = await this.open();
-    return insertFileEventWithDbAsync(db, input);
+    // Queued so the insert cannot land inside another caller's transaction.
+    return runSerializedAsync(() => insertFileEventWithDbAsync(db, input));
   }
 
   async getRecentAsync(fileId: string, limit: number = 50): Promise<FileEvent[]> {

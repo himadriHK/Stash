@@ -5,6 +5,7 @@
  */
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase } from './database';
+import { runWriteAsync } from './transactionQueue';
 
 export interface HashCacheEntry {
   uri: string;
@@ -52,7 +53,8 @@ export class HashCacheRepository {
     contentHash: string;
   }): Promise<void> {
     const db = await this.open();
-    await db.runAsync(
+    await runWriteAsync(
+      db,
       `INSERT INTO file_hash_cache (uri, size, modified_at, content_hash, updated_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(uri) DO UPDATE SET
@@ -66,11 +68,11 @@ export class HashCacheRepository {
 
   async pruneAsync(olderThanIso: string): Promise<void> {
     const db = await this.open();
-    await db.runAsync('DELETE FROM file_hash_cache WHERE updated_at < ?', [olderThanIso]);
+    await runWriteAsync(db, 'DELETE FROM file_hash_cache WHERE updated_at < ?', [olderThanIso]);
   }
 
   async clearAsync(): Promise<void> {
     const db = await this.open();
-    await db.runAsync('DELETE FROM file_hash_cache');
+    await runWriteAsync(db, 'DELETE FROM file_hash_cache');
   }
 }
