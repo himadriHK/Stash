@@ -7,6 +7,8 @@
  * batched database work instead of per-file round trips:
  *  - the hash cache and the set of already-tracked content hashes are preloaded
  *    once per folder, then kept in memory;
+ *  - files are hashed with a small bounded-concurrency pool (`File.digest` is
+ *    async native I/O, so a few digests safely overlap);
  *  - rows are inserted in transactional batches;
  *  - hash-cache writes are flushed once per chunk;
  *  - the loop yields between chunks so the UI thread keeps painting.
@@ -22,7 +24,12 @@ import { createFileEntity, type FileEntity } from '../models/fileEntity';
 import type { FolderConfig } from '../models/folderConfig';
 import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
-import { forEachChunkedAsync, yieldToEventLoop } from '../utils/cooperative';
+import {
+  forEachChunkedAsync,
+  mapWithConcurrencyAsync,
+  yieldToEventLoop,
+} from '../utils/cooperative';
+import { profileAsync } from '../utils/profiler';
 import { mimeTypeForFile, type FolderScannerService } from './folderScannerService';
 
 export interface FolderIngestionResult {
@@ -43,6 +50,9 @@ export type FolderIngestionProgressHandler = (progress: FolderIngestionProgress)
 const BATCH_SIZE = 25;
 /** Files handled per scheduling slice; the loop yields between slices. */
 const CHUNK_SIZE = 250;
+/** Files hashed at the same time. `File.digest` is async native work and safe
+ * to overlap; higher values risk saturating the device's IO dispatcher. */
+const HASH_CONCURRENCY = 4;
 /** Cached hashes older than this are pruned on each ingestion. */
 const HASH_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -61,6 +71,19 @@ export class FolderIngestionService {
   ) {}
 
   async ingestFolderAsync(
+    folder: FolderConfig,
+    deviceId: string,
+    userId: string,
+    onProgress?: FolderIngestionProgressHandler,
+  ): Promise<FolderIngestionResult> {
+    return profileAsync(
+      'folder.ingest',
+      () => this.ingestFolderInnerAsync(folder, deviceId, userId, onProgress),
+      { attrs: { folderPath: folder.folderPath } },
+    );
+  }
+
+  private async ingestFolderInnerAsync(
     folder: FolderConfig,
     deviceId: string,
     userId: string,
@@ -109,59 +132,78 @@ export class FolderIngestionService {
       }
     };
 
+    /**
+     * Resolves one file's hash from the in-memory cache or the native digest,
+     * updating the cache map and pending cache writes. Returns null when the
+     * file cannot be hashed; the error is logged so the pass can continue.
+     */
+    const hashOrCacheAsync = async (file: {
+      uri: string;
+      size: number;
+      modifiedAtMs?: number | null;
+    }): Promise<string | null> => {
+      const modifiedAtIso = modifiedAtIsoOf(file);
+      const cached = cacheByUri.get(file.uri);
+      if (
+        cached &&
+        cached.size === file.size &&
+        modifiedAtIso !== null &&
+        cached.modifiedAt === modifiedAtIso
+      ) {
+        cacheHits += 1;
+        return cached.contentHash;
+      }
+
+      try {
+        const hash = await this.scanner.computeFileHashAsync(file.uri, file.size);
+        if (!hash) {
+          return null;
+        }
+        hashed += 1;
+
+        if (modifiedAtIso !== null) {
+          const entry: HashCacheEntry = {
+            uri: file.uri,
+            size: file.size,
+            modifiedAt: modifiedAtIso,
+            contentHash: hash,
+            updatedAt: new Date().toISOString(),
+          };
+          cacheByUri.set(file.uri, entry);
+          cacheWrites.push({
+            uri: entry.uri,
+            size: entry.size,
+            modifiedAt: entry.modifiedAt,
+            contentHash: entry.contentHash,
+          });
+        }
+        return hash;
+      } catch (error) {
+        await logError('folderIngestion.hash', error, {
+          uri: file.uri,
+          folderPath: folder.folderPath,
+        });
+        return null;
+      }
+    };
+
     try {
       await forEachChunkedAsync(
         scannedFiles,
         async (chunk) => {
-          for (const file of chunk) {
+          // Hash the chunk with bounded concurrency: a serial 2000-file pass
+          // spends its whole lifetime waiting on the native digest (see
+          // `folder.hash` in stash-profile.log).
+          const hashedFiles = await mapWithConcurrencyAsync(
+            chunk,
+            HASH_CONCURRENCY,
+            async (file) => ({ file, hash: await hashOrCacheAsync(file) }),
+          );
+
+          // Sequential post-hash pass so dedup mutations (knownHashes), batch
+          // assembly and flushes keep their previous order-invariant behavior.
+          for (const { file, hash } of hashedFiles) {
             processed += 1;
-
-            const modifiedAtIso = modifiedAtIsoOf(file);
-            const cached = cacheByUri.get(file.uri);
-
-            let hash: string | null = null;
-            if (
-              cached &&
-              cached.size === file.size &&
-              modifiedAtIso !== null &&
-              cached.modifiedAt === modifiedAtIso
-            ) {
-              hash = cached.contentHash;
-              cacheHits += 1;
-            } else {
-              try {
-                hash = await this.scanner.computeFileHashAsync(file.uri, file.size);
-              } catch (error) {
-                await logError('folderIngestion.hash', error, {
-                  uri: file.uri,
-                  folderPath: folder.folderPath,
-                });
-                continue;
-              }
-
-              if (!hash) {
-                continue;
-              }
-              hashed += 1;
-
-              if (modifiedAtIso !== null) {
-                const entry: HashCacheEntry = {
-                  uri: file.uri,
-                  size: file.size,
-                  modifiedAt: modifiedAtIso,
-                  contentHash: hash,
-                  updatedAt: new Date().toISOString(),
-                };
-                cacheByUri.set(file.uri, entry);
-                cacheWrites.push({
-                  uri: entry.uri,
-                  size: entry.size,
-                  modifiedAt: entry.modifiedAt,
-                  contentHash: entry.contentHash,
-                });
-              }
-            }
-
             if (!hash) {
               continue;
             }

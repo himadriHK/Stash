@@ -12,6 +12,7 @@ import { parseUploadResponseMessage } from '../models/messages';
 import type { FileLifecycleService } from './fileLifecycleService';
 import type { KafkaTransport, KafkaTransportRecord } from './kafkaTransport';
 import { recordConsumerRecord } from './runtimeState';
+import { profileAsync } from '../utils/profiler';
 
 export class KafkaConsumer {
   private abortController: AbortController | null = null;
@@ -101,6 +102,12 @@ export class KafkaConsumer {
   }
 
   private async handleRecordAsync(record: KafkaTransportRecord): Promise<void> {
+    return profileAsync('kafka.record', () => this.handleRecordInnerAsync(record), {
+      sentry: false,
+    });
+  }
+
+  private async handleRecordInnerAsync(record: KafkaTransportRecord): Promise<void> {
     try {
       const response = parseUploadResponseMessage(record.value);
       if (!response || !response.fileId) {

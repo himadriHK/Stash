@@ -14,6 +14,7 @@ import { SettingsScreen } from '../screens/SettingsScreen';
 import { AboutScreen } from '../screens/AboutScreen';
 import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY } from '../theme/typography';
+import { withRenderProfile } from '../utils/renderProfiler';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
@@ -25,22 +26,37 @@ const TABS: {
 }[] = [
   {
     name: 'Gallery',
-    component: GalleryScreen,
+    component: withRenderProfile('Gallery', GalleryScreen as React.ComponentType),
     icon: 'images-outline',
     activeIcon: 'images',
   },
   {
     name: 'Files',
-    component: FilesScreen,
+    component: withRenderProfile('Files', FilesScreen as React.ComponentType),
     icon: 'document-text-outline',
     activeIcon: 'document-text',
   },
-  { name: 'Upload', component: UploadScreen, icon: 'cloud-upload-outline', activeIcon: 'cloud-upload' },
-  { name: 'Folders', component: FoldersScreen, icon: 'folder-outline', activeIcon: 'folder' },
-  { name: 'Settings', component: SettingsScreen, icon: 'settings-outline', activeIcon: 'settings' },
+  {
+    name: 'Upload',
+    component: withRenderProfile('Upload', UploadScreen as React.ComponentType),
+    icon: 'cloud-upload-outline',
+    activeIcon: 'cloud-upload',
+  },
+  {
+    name: 'Folders',
+    component: withRenderProfile('Folders', FoldersScreen as React.ComponentType),
+    icon: 'folder-outline',
+    activeIcon: 'folder',
+  },
+  {
+    name: 'Settings',
+    component: withRenderProfile('Settings', SettingsScreen as React.ComponentType),
+    icon: 'settings-outline',
+    activeIcon: 'settings',
+  },
   {
     name: 'About',
-    component: AboutScreen,
+    component: withRenderProfile('About', AboutScreen as React.ComponentType),
     icon: 'information-circle-outline',
     activeIcon: 'information-circle',
   },

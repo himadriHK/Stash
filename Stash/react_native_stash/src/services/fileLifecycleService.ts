@@ -18,6 +18,7 @@ import {
 import type { FileEntity } from '../models/fileEntity';
 import type { UploadResponseMessage } from '../models/messages';
 import { shouldYield, yieldToEventLoop } from '../utils/cooperative';
+import { profileAsync } from '../utils/profiler';
 import { computeNextAttemptAt, nowIso } from './retryPolicy';
 
 const DEFAULT_STALE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -366,6 +367,17 @@ export class FileLifecycleService {
   }
 
   async applyResponseAsync(
+    response: UploadResponseMessage,
+    maxHostRetries: number,
+  ): Promise<ApplyResponseOutcome> {
+    return profileAsync(
+      'lifecycle.applyResponse',
+      () => this.applyResponseInnerAsync(response, maxHostRetries),
+      { sentry: false },
+    );
+  }
+
+  private async applyResponseInnerAsync(
     response: UploadResponseMessage,
     maxHostRetries: number,
   ): Promise<ApplyResponseOutcome> {

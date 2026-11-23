@@ -5,9 +5,10 @@
  */
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase, parseJsonColumn } from './database';
-import { runTransactionAsync, runWriteAsync } from './transactionQueue';
+import { runBatchAsync, runTransactionAsync, runWriteAsync } from './transactionQueue';
 import type { FileEntity } from '../models/fileEntity';
 import { parseUploadStatus, UploadStatus } from '../models/uploadStatus';
+import { profileAsync } from '../utils/profiler';
 
 export interface FileSummary {
   totalFiles: number;
@@ -140,6 +141,8 @@ const FILE_INSERT_VALUES = `$id, $file_name, $file_path, $file_size, $content_ha
   $request_correlation_id, $request_message_id, $host_retry_count,
   $next_attempt_at, $failure_stage, $updated_at`;
 const FILE_INSERT_SQL = `INSERT INTO files (${FILE_INSERT_COLUMNS}) VALUES (${FILE_INSERT_VALUES})`;
+const FILE_INSERT_OR_IGNORE_SQL = `INSERT OR IGNORE INTO files (${FILE_INSERT_COLUMNS}) VALUES (${FILE_INSERT_VALUES})`;
+const FILE_OWNERSHIP_UPDATE_SQL = `UPDATE files SET device_id = ?, user_id = ?, updated_at = ? WHERE id = ?`;
 
 export class FileRepository {
   constructor(private readonly open: () => Promise<SQLiteDatabase> = getDatabase) {}
@@ -249,6 +252,12 @@ export class FileRepository {
    * per file; callers preload this set once per pass instead.
    */
   async getAllContentHashesAsync(): Promise<Set<string>> {
+    return profileAsync('db.contentHashes', () => this.getAllContentHashesInnerAsync(), {
+      sentry: false,
+    });
+  }
+
+  private async getAllContentHashesInnerAsync(): Promise<Set<string>> {
     const db = await this.open();
     const rows = await db.getAllAsync<{ content_hash: string }>(
       'SELECT content_hash FROM files',
@@ -261,6 +270,18 @@ export class FileRepository {
   }
 
   async getCandidatesAsync(
+    limit: number,
+    maxRetries: number,
+    maxHostRetries: number,
+  ): Promise<FileEntity[]> {
+    return profileAsync(
+      'db.candidates',
+      () => this.getCandidatesInnerAsync(limit, maxRetries, maxHostRetries),
+      { sentry: false },
+    );
+  }
+
+  private async getCandidatesInnerAsync(
     limit: number,
     maxRetries: number,
     maxHostRetries: number,
@@ -314,19 +335,22 @@ export class FileRepository {
    * the return value is the number of rows actually inserted.
    */
   async addManyAsync(files: readonly FileEntity[]): Promise<number> {
+    return profileAsync('db.insertMany', () => this.addManyInnerAsync(files), {
+      sentry: false,
+      attrs: { count: files.length },
+    });
+  }
+
+  private async addManyInnerAsync(files: readonly FileEntity[]): Promise<number> {
     if (files.length === 0) {
       return 0;
     }
     const db = await this.open();
+    // One prepared INSERT for the whole batch: prepareAsync/executeAsync once
+    // per batch instead of prepare + execute + finalize per row.
     let inserted = 0;
     await runTransactionAsync(db, async () => {
-      for (const file of files) {
-        const result = await db.runAsync(
-          `INSERT OR IGNORE INTO files (${FILE_INSERT_COLUMNS}) VALUES (${FILE_INSERT_VALUES})`,
-          toWriteParams(file),
-        );
-        inserted += result.changes;
-      }
+      inserted = await runBatchAsync(db, FILE_INSERT_OR_IGNORE_SQL, files, toWriteParams);
     });
     return inserted;
   }
@@ -367,7 +391,7 @@ export class FileRepository {
     const db = await this.open();
     await runWriteAsync(
       db,
-      `UPDATE files SET device_id = ?, user_id = ?, updated_at = ? WHERE id = ?`,
+      FILE_OWNERSHIP_UPDATE_SQL,
       [deviceId, userId, new Date().toISOString(), id],
     );
   }
@@ -381,6 +405,18 @@ export class FileRepository {
     deviceId: string,
     userId: string,
   ): Promise<number> {
+    return profileAsync(
+      'db.setOwnershipMany',
+      () => this.setOwnershipManyInnerAsync(ids, deviceId, userId),
+      { sentry: false, attrs: { count: ids.length } },
+    );
+  }
+
+  private async setOwnershipManyInnerAsync(
+    ids: readonly string[],
+    deviceId: string,
+    userId: string,
+  ): Promise<number> {
     if (ids.length === 0) {
       return 0;
     }
@@ -388,13 +424,12 @@ export class FileRepository {
     const updatedAt = new Date().toISOString();
     let changed = 0;
     await runTransactionAsync(db, async () => {
-      for (const id of ids) {
-        const result = await db.runAsync(
-          `UPDATE files SET device_id = ?, user_id = ?, updated_at = ? WHERE id = ?`,
-          [deviceId, userId, updatedAt, id],
-        );
-        changed += result.changes;
-      }
+      changed = await runBatchAsync(db, FILE_OWNERSHIP_UPDATE_SQL, ids, (id) => [
+        deviceId,
+        userId,
+        updatedAt,
+        id,
+      ]);
     });
     return changed;
   }
@@ -412,10 +447,7 @@ export class FileRepository {
     const db = await this.open();
     let deleted = 0;
     await runTransactionAsync(db, async () => {
-      for (const id of ids) {
-        const result = await db.runAsync('DELETE FROM files WHERE id = ?', [id]);
-        deleted += result.changes;
-      }
+      deleted = await runBatchAsync(db, 'DELETE FROM files WHERE id = ?', ids, (id) => [id]);
     });
     return deleted;
   }

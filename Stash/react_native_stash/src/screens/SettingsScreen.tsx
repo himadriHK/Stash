@@ -2,8 +2,8 @@
  * Settings screen: appearance mode (System/Light/Dark), account identifiers,
  * log out, and the read-only configuration summary from appconfig.json.
  */
-import React, { useCallback, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import * as Application from 'expo-application';
 import { useFocusEffect } from '@react-navigation/native';
 import { AppButton } from '../components/AppButton';
@@ -18,6 +18,13 @@ import {
   errorLogUri,
   readErrorLogTailAsync,
 } from '../utils/errorLogger';
+import {
+  clearProfileLogAsync,
+  getProfileReportText,
+  isProfilerEnabled,
+  profileLogUri,
+  resetProfile,
+} from '../utils/profiler';
 import { formatBytesAsMb, formatDate, formatFileSize, formatRelativeTime } from '../utils/format';
 import {
   collectDiagnosticsAsync,
@@ -409,6 +416,203 @@ const StorageSection = React.memo(function StorageSection({
   );
 });
 
+interface PerformanceProfileSectionProps {
+  profileText: string;
+  enabled: boolean;
+  logPath: string | null;
+  onRefresh: () => void;
+  onCopy: () => void;
+  onClear: () => void;
+}
+
+/**
+ * Read-only view of the local function-level profile. Memoized so unrelated
+ * diagnostics/preference updates do not re-render it.
+ */
+const PerformanceProfileSection = React.memo(function PerformanceProfileSection({
+  profileText,
+  enabled,
+  logPath,
+  onRefresh,
+  onCopy,
+  onClear,
+}: PerformanceProfileSectionProps) {
+  const { colors } = useTheme();
+  return (
+    <>
+      <SectionTitle>Performance profile</SectionTitle>
+      <SettingsRow label="Function profiler" value={enabled ? 'Enabled' : 'Disabled'} />
+      <SettingsRow label="Profile log" value={logPath ?? 'Not available on this platform'} />
+      <View style={styles.eventBlock}>
+        <Text style={[styles.rowLabel, { color: colors.textMuted }]}>
+          Top functions by self time
+        </Text>
+        <Text selectable style={[styles.eventText, { color: colors.text }]}>
+          {profileText.trim().length > 0
+            ? profileText
+            : 'No samples yet. Run a sync or scan a folder to collect timings.'}
+        </Text>
+      </View>
+      <View style={styles.diagnosticsButtons}>
+        <AppButton title="Refresh profile" onPress={onRefresh} testID="RefreshProfileButton" />
+        <AppButton title="Copy profile" variant="link" onPress={onCopy} testID="CopyProfileButton" />
+        <AppButton title="Clear profile" variant="link" onPress={onClear} testID="ClearProfileButton" />
+      </View>
+    </>
+  );
+});
+
+interface AppearanceSectionProps {
+  mode: ThemeMode;
+  onSelectMode: (mode: ThemeMode) => void;
+}
+
+/** Memoized so diagnostics/preference updates do not re-render the mode chips. */
+const AppearanceSection = React.memo(function AppearanceSection({
+  mode,
+  onSelectMode,
+}: AppearanceSectionProps) {
+  const { colors } = useTheme();
+  return (
+    <>
+      <SectionTitle>Appearance</SectionTitle>
+      <View style={styles.modeRow}>
+        {MODES.map((option) => {
+          const active = mode === option.value;
+          return (
+            <Pressable
+              key={option.value}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              onPress={() => onSelectMode(option.value)}
+              style={({ pressed }) => [
+                styles.modeChip,
+                {
+                  backgroundColor: active ? colors.primarySolid : 'transparent',
+                  borderColor: active ? colors.primarySolid : colors.border,
+                },
+                pressed ? styles.pressed : null,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.modeLabel,
+                  { color: active ? '#FFFFFF' : colors.text },
+                ]}
+              >
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </>
+  );
+});
+
+interface AccountSectionProps {
+  userId: string | null;
+  deviceId: string | null;
+  onLogout: () => void;
+}
+
+/** Memoized so diagnostics/preference updates do not re-render the account rows. */
+const AccountSection = React.memo(function AccountSection({
+  userId,
+  deviceId,
+  onLogout,
+}: AccountSectionProps) {
+  return (
+    <>
+      <SectionTitle>Account</SectionTitle>
+      <SettingsRow label="User ID" value={userId || '—'} />
+      <SettingsRow label="Device ID" value={deviceId || '—'} />
+      <View style={styles.logoutButton}>
+        <AppButton title="Log out" onPress={() => void onLogout()} testID="LogoutButton" />
+      </View>
+    </>
+  );
+});
+
+interface ConfigurationSectionProps {
+  identityUrl: string | null;
+  proxyUrl: string | null;
+}
+
+/**
+ * Read-only configuration summary. The URL values are passed as plain strings
+ * (hoisted to `useMemo` in the screen) because `identityApiBaseUrl()` and
+ * `kafkaProxyUrl()` build a fresh string per call; the static `appConfig.*`
+ * fields are module constants and therefore stable.
+ */
+const ConfigurationSection = React.memo(function ConfigurationSection({
+  identityUrl,
+  proxyUrl,
+}: ConfigurationSectionProps) {
+  return (
+    <>
+      <SectionTitle>Configuration</SectionTitle>
+      <SettingsRow label="Identity API" value={identityUrl ?? 'Not configured'} />
+      <SettingsRow label="Request timeout" value={`${appConfig.IdentityApiTimeoutSeconds}s`} />
+      <SettingsRow label="Storage provider" value={appConfig.Storage.Provider} />
+      <SettingsRow
+        label="Storage bucket"
+        value={appConfig.Storage.S3.Bucket || 'Not configured'}
+      />
+      <SettingsRow label="Storage region" value={appConfig.Storage.S3.Region || '—'} />
+      <SettingsRow label="Upload batch size" value={String(appConfig.UploadSettings.BatchSize)} />
+      <SettingsRow label="Maximum retries" value={String(appConfig.UploadSettings.MaxRetries)} />
+      <SettingsRow
+        label="Maximum file size"
+        value={formatBytesAsMb(appConfig.UploadSettings.MaxFileSizeBytes)}
+      />
+      <SettingsRow
+        label="Background upload"
+        value={
+          appConfig.BackgroundUpload.Enabled
+            ? `Every ${appConfig.BackgroundUpload.IntervalMinutes} min`
+            : 'Disabled'
+        }
+      />
+      <SettingsRow
+        label="Files per background run"
+        value={
+          appConfig.BackgroundUpload.MaxFilesPerRun <= 0
+            ? 'Unlimited'
+            : String(appConfig.BackgroundUpload.MaxFilesPerRun)
+        }
+      />
+      <SettingsRow label="Kafka proxy" value={proxyUrl ?? 'Not configured'} />
+      <SettingsRow label="Upload request topic" value={appConfig.Kafka.TopicUploadRequest} />
+      <SettingsRow label="Upload response topic" value={appConfig.Kafka.TopicUploadResponse} />
+      <SettingsRow label="Dead letter topic" value={appConfig.Kafka.TopicDeadLetter} />
+    </>
+  );
+});
+
+interface AboutSectionProps {
+  appVersion: string;
+  buildVersion: string | null;
+}
+
+/** Memoized so diagnostics/preference updates do not re-render the about rows. */
+const AboutSection = React.memo(function AboutSection({
+  appVersion,
+  buildVersion,
+}: AboutSectionProps) {
+  return (
+    <>
+      <SectionTitle>About</SectionTitle>
+      <SettingsRow label="Application" value="Stash (React Native / Expo)" />
+      <SettingsRow
+        label="Version"
+        value={`${appVersion}${buildVersion ? ` (build ${buildVersion})` : ''}`}
+      />
+      <SettingsRow label="Storage" value={`${appConfig.Storage.Provider} compatible`} />
+    </>
+  );
+});
+
 export function SettingsScreen() {
   const { colors, mode, setMode } = useTheme();
   const { userId, deviceId, logout } = useAuth();
@@ -421,8 +625,13 @@ export function SettingsScreen() {
   const [summary, setSummary] = useState<FileSummary | null>(null);
   const [preferences, setPreferences] = useState<UiPreferences | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [profileText, setProfileText] = useState<string>('');
   const appVersion = Application.nativeApplicationVersion ?? '1.0.0';
   const buildVersion = Application.nativeBuildVersion;
+  // Hoisted so the memoized ConfigurationSection gets referentially stable
+  // props; these helpers return a fresh string on every call.
+  const identityUrl = useMemo(() => identityApiBaseUrl(), []);
+  const proxyUrl = useMemo(() => kafkaProxyUrl(), []);
 
   const refreshStorageAccess = useCallback(async () => {
     try {
@@ -463,13 +672,36 @@ export function SettingsScreen() {
     }
   }, []);
 
+  const refreshProfile = useCallback(() => {
+    setProfileText(getProfileReportText({ top: 20 }));
+  }, []);
+
+  const onCopyProfile = useCallback(() => {
+    const text = profileText.trim().length > 0 ? profileText : getProfileReportText({ top: 20 });
+    void Share.share({ message: text }).catch(() => undefined);
+  }, [profileText]);
+
+  const onClearProfile = useCallback(async () => {
+    resetProfile();
+    await clearProfileLogAsync();
+    setProfileText('');
+    toast.show('Performance profile cleared.');
+  }, [toast]);
+
   useFocusEffect(
     useCallback(() => {
       void refreshStorageAccess();
       void refreshDiagnostics();
       void refreshSummary();
       void refreshPreferences();
-    }, [refreshStorageAccess, refreshDiagnostics, refreshSummary, refreshPreferences]),
+      refreshProfile();
+    }, [
+      refreshStorageAccess,
+      refreshDiagnostics,
+      refreshSummary,
+      refreshPreferences,
+      refreshProfile,
+    ]),
   );
 
   const onToggleAutoUpload = useCallback(
@@ -560,45 +792,9 @@ export function SettingsScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScreenTitle>Settings</ScreenTitle>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <SectionTitle>Appearance</SectionTitle>
-        <View style={styles.modeRow}>
-          {MODES.map((option) => {
-            const active = mode === option.value;
-            return (
-              <Pressable
-                key={option.value}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                onPress={() => setMode(option.value)}
-                style={({ pressed }) => [
-                  styles.modeChip,
-                  {
-                    backgroundColor: active ? colors.primarySolid : 'transparent',
-                    borderColor: active ? colors.primarySolid : colors.border,
-                  },
-                  pressed ? styles.pressed : null,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modeLabel,
-                    { color: active ? '#FFFFFF' : colors.text },
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <AppearanceSection mode={mode} onSelectMode={setMode} />
 
-        <SectionTitle>Account</SectionTitle>
-        <SettingsRow label="User ID" value={userId || '—'} />
-        <SettingsRow label="Device ID" value={deviceId || '—'} />
-
-        <View style={styles.logoutButton}>
-          <AppButton title="Log out" onPress={() => void onLogout()} testID="LogoutButton" />
-        </View>
+        <AccountSection userId={userId} deviceId={deviceId} onLogout={onLogout} />
 
         <BackupStatusSection summary={summary} syncing={syncing} onSyncNow={onSyncNow} />
 
@@ -608,47 +804,22 @@ export function SettingsScreen() {
           onToggleBackupVideos={onToggleBackupVideos}
         />
 
-        <SectionTitle>Configuration</SectionTitle>
-        <SettingsRow label="Identity API" value={identityApiBaseUrl() ?? 'Not configured'} />
-        <SettingsRow label="Request timeout" value={`${appConfig.IdentityApiTimeoutSeconds}s`} />
-        <SettingsRow label="Storage provider" value={appConfig.Storage.Provider} />
-        <SettingsRow
-          label="Storage bucket"
-          value={appConfig.Storage.S3.Bucket || 'Not configured'}
-        />
-        <SettingsRow label="Storage region" value={appConfig.Storage.S3.Region || '—'} />
-        <SettingsRow label="Upload batch size" value={String(appConfig.UploadSettings.BatchSize)} />
-        <SettingsRow label="Maximum retries" value={String(appConfig.UploadSettings.MaxRetries)} />
-        <SettingsRow
-          label="Maximum file size"
-          value={formatBytesAsMb(appConfig.UploadSettings.MaxFileSizeBytes)}
-        />
-        <SettingsRow
-          label="Background upload"
-          value={
-            appConfig.BackgroundUpload.Enabled
-              ? `Every ${appConfig.BackgroundUpload.IntervalMinutes} min`
-              : 'Disabled'
-          }
-        />
-        <SettingsRow
-          label="Files per background run"
-          value={
-            appConfig.BackgroundUpload.MaxFilesPerRun <= 0
-              ? 'Unlimited'
-              : String(appConfig.BackgroundUpload.MaxFilesPerRun)
-          }
-        />
-        <SettingsRow label="Kafka proxy" value={kafkaProxyUrl() ?? 'Not configured'} />
-        <SettingsRow label="Upload request topic" value={appConfig.Kafka.TopicUploadRequest} />
-        <SettingsRow label="Upload response topic" value={appConfig.Kafka.TopicUploadResponse} />
-        <SettingsRow label="Dead letter topic" value={appConfig.Kafka.TopicDeadLetter} />
+        <ConfigurationSection identityUrl={identityUrl} proxyUrl={proxyUrl} />
 
         <DiagnosticsSection
           diagnostics={diagnostics}
           loading={diagnosticsLoading}
           error={diagnosticsError}
           onRefresh={refreshDiagnostics}
+        />
+
+        <PerformanceProfileSection
+          profileText={profileText}
+          enabled={isProfilerEnabled()}
+          logPath={profileLogUri()}
+          onRefresh={refreshProfile}
+          onCopy={onCopyProfile}
+          onClear={onClearProfile}
         />
 
         <StorageSection
@@ -660,13 +831,7 @@ export function SettingsScreen() {
           onClearErrorLog={onClearErrorLog}
         />
 
-        <SectionTitle>About</SectionTitle>
-        <SettingsRow label="Application" value="Stash (React Native / Expo)" />
-        <SettingsRow
-          label="Version"
-          value={`${appVersion}${buildVersion ? ` (build ${buildVersion})` : ''}`}
-        />
-        <SettingsRow label="Storage" value={`${appConfig.Storage.Provider} compatible`} />
+        <AboutSection appVersion={appVersion} buildVersion={buildVersion} />
 
         <NoteText style={styles.footerNote}>
           Configuration comes from src/config/appconfig.json, with secrets supplied via EXPO_PUBLIC_* environment variables (.env).

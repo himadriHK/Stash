@@ -4,6 +4,7 @@
  */
 import * as SQLite from 'expo-sqlite';
 import { runTransactionAsync } from './transactionQueue';
+import { profileAsync } from '../utils/profiler';
 
 const DB_NAME = 'stash.db';
 
@@ -303,12 +304,16 @@ let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {
-    databasePromise = (async () => {
-      const db = await SQLite.openDatabaseAsync(DB_NAME);
-      await db.execAsync(SCHEMA);
-      await runMigrationsAsync(db);
-      return db;
-    })();
+    databasePromise = profileAsync(
+      'db.open',
+      async () => {
+        const db = await SQLite.openDatabaseAsync(DB_NAME);
+        await db.execAsync(SCHEMA);
+        await runMigrationsAsync(db);
+        return db;
+      },
+      { sentry: false },
+    );
     databasePromise.catch(() => {
       // Allow a retry on the next call after a failed open.
       databasePromise = null;

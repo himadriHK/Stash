@@ -16,7 +16,8 @@
  * surrounding work (file reads, network transfers) still runs concurrently.
  *
  * Use `runTransactionAsync` for multi-statement atomic work, `runWriteAsync`
- * for a single writing statement, and `runSerializedAsync` when the write is
+ * for a single writing statement, `runBatchAsync` for a prepared-statement loop
+ * inside a queued transaction, and `runSerializedAsync` when the write is
  * performed by a helper that takes the raw connection. Never call these from
  * inside a queued task: the nested call would wait on its own queue slot.
  */
@@ -28,6 +29,16 @@ export interface TransactionCapableDatabase {
 
 export interface WriteCapableDatabase {
   runAsync(source: string, params: SQLiteBindParams): Promise<SQLiteRunResult>;
+}
+
+/** Minimal shape of a prepared statement produced by `db.prepareAsync`. */
+export interface PreparedWriteStatement {
+  executeAsync(params: SQLiteBindParams): Promise<{ changes: number }>;
+  finalizeAsync(): Promise<void>;
+}
+
+export interface BatchCapableDatabase {
+  prepareAsync(source: string): Promise<PreparedWriteStatement>;
 }
 
 let tail: Promise<void> = Promise.resolve();
@@ -71,4 +82,35 @@ export async function runWriteAsync(
   params?: SQLiteBindParams,
 ): Promise<SQLiteRunResult> {
   return runSerializedAsync(() => db.runAsync(source, params ?? []));
+}
+
+/**
+ * Executes one INSERT/UPDATE/DELETE for every entry with a single prepared
+ * statement: 1 prepare + N execute + 1 finalize instead of the 3 bridge round
+ * trips a `runAsync` loop pays per row. Returns the summed `changes`.
+ *
+ * Like the queue, this must never be called from inside a queued task. It is
+ * meant for the inner loops of `runTransactionAsync` bodies (batch inserts,
+ * upserts, deletes) which already hold the queue slot.
+ */
+export async function runBatchAsync<T>(
+  db: BatchCapableDatabase,
+  source: string,
+  entries: readonly T[],
+  makeParams: (entry: T) => SQLiteBindParams,
+): Promise<number> {
+  if (entries.length === 0) {
+    return 0;
+  }
+  const statement = await db.prepareAsync(source);
+  try {
+    let changes = 0;
+    for (const entry of entries) {
+      const result = await statement.executeAsync(makeParams(entry));
+      changes += result.changes;
+    }
+    return changes;
+  } finally {
+    await statement.finalizeAsync();
+  }
 }

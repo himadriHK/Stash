@@ -5,7 +5,8 @@
  */
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase } from './database';
-import { runTransactionAsync, runWriteAsync } from './transactionQueue';
+import { runBatchAsync, runTransactionAsync, runWriteAsync } from './transactionQueue';
+import { profileAsync } from '../utils/profiler';
 
 export interface HashCacheEntry {
   uri: string;
@@ -77,6 +78,10 @@ export class HashCacheRepository {
    * map once and keep it in memory for the pass.
    */
   async getAllAsync(): Promise<HashCacheEntry[]> {
+    return profileAsync('db.hashCacheLoad', () => this.getAllInnerAsync(), { sentry: false });
+  }
+
+  private async getAllInnerAsync(): Promise<HashCacheEntry[]> {
     const db = await this.open();
     const rows = await db.getAllAsync<HashCacheRow>(
       `SELECT uri, size, modified_at, content_hash, updated_at FROM file_hash_cache`,
@@ -98,16 +103,24 @@ export class HashCacheRepository {
   async putManyAsync(
     entries: readonly { uri: string; size: number; modifiedAt: string; contentHash: string }[],
   ): Promise<number> {
+    return profileAsync('db.hashCacheWrite', () => this.putManyInnerAsync(entries), {
+      sentry: false,
+      attrs: { count: entries.length },
+    });
+  }
+
+  private async putManyInnerAsync(
+    entries: readonly { uri: string; size: number; modifiedAt: string; contentHash: string }[],
+  ): Promise<number> {
     if (entries.length === 0) {
       return 0;
     }
     const db = await this.open();
+    // One prepared UPSERT per batch instead of prepare + execute + finalize
+    // per row.
     let written = 0;
     await runTransactionAsync(db, async () => {
-      for (const entry of entries) {
-        const result = await db.runAsync(HASH_CACHE_UPSERT_SQL, hashCacheParams(entry));
-        written += result.changes;
-      }
+      written = await runBatchAsync(db, HASH_CACHE_UPSERT_SQL, entries, hashCacheParams);
     });
     return written;
   }

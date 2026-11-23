@@ -36,6 +36,16 @@ import type { KafkaProducer } from './kafkaProducer';
 import type { OutboxPublisher } from './outboxPublisher';
 import type { UploadManager } from './uploadManager';
 import { getUiPreferencesAsync } from './uiPreferences';
+import {
+  getStorageAccessAsync,
+  logStorageAccessBlocker,
+} from '../utils/storagePermissions';
+import {
+  appendProfileReportToFile,
+  isProfilerEnabled,
+  printProfileSummary,
+  profileAsync,
+} from '../utils/profiler';
 
 export interface BackgroundUploadResult {
   alreadyRunning: boolean;
@@ -99,7 +109,22 @@ export class BackgroundUploadService {
       return this.finish(emptyResult({ alreadyRunning: true }));
     }
     this.runGate = true;
+    try {
+      return await profileAsync('background.pass', () => this.runPassAsync(), {
+        attrs: { source: 'scheduled' },
+      });
+    } finally {
+      this.runGate = false;
+      // After each pass, surface the cumulative function-level profile so the
+      // bottlenecks of that pass are visible in the console and the profile log.
+      if (isProfilerEnabled()) {
+        printProfileSummary({ top: 20 });
+        void appendProfileReportToFile('background.pass');
+      }
+    }
+  }
 
+  private async runPassAsync(): Promise<BackgroundUploadResult> {
     let scanned = 0;
     let discovered = 0;
     let uploaded = 0;
@@ -113,10 +138,11 @@ export class BackgroundUploadService {
       const maxHostRetries = Math.max(0, appConfig.UploadSettings.MaxHostRetries);
 
       // Recover crash/kill leftovers before deciding what is eligible.
-      const recovery = await this.deps.lifecycle.recoverStaleAsync({
-        maxRetries,
-        maxHostRetries,
-      });
+      const recovery = await profileAsync(
+        'background.recoverStale',
+        () => this.deps.lifecycle.recoverStaleAsync({ maxRetries, maxHostRetries }),
+        { sentry: false },
+      );
       recoveredUploads = recovery.recoveredUploads;
       recoveredProcessing = recovery.recoveredProcessing;
 
@@ -132,7 +158,9 @@ export class BackgroundUploadService {
         );
       }
 
-      await this.flushOutboxAsync();
+      await profileAsync('background.flushOutbox', () => this.flushOutboxAsync(), {
+        sentry: false,
+      });
 
       const deviceId = await getOrCreateDeviceIdAsync();
       const userId = await getUserIdAsync();
@@ -143,25 +171,45 @@ export class BackgroundUploadService {
       );
 
       if (folders.length > 0) {
-        this.ensureProgress('scanning', 0);
+        // A background task cannot show the Android permission dialog, so a
+        // missing storage permission must not turn the pass into per-folder
+        // permission errors. SAF (content://) folders need no runtime
+        // permission; the foreground "Sync now" path prompts instead.
+        const storageAccess = await getStorageAccessAsync();
+        if (storageAccess.state !== 'granted' && storageAccess.state !== 'unsupported') {
+          await logStorageAccessBlocker(storageAccess);
+          console.warn(
+            `Background folder scan skipped: storage access is ${storageAccess.summary}. ${storageAccess.detail}`,
+          );
+        } else {
+          this.ensureProgress('scanning', 0);
 
-        for (const folder of folders) {
-          try {
-            const result = await this.deps.folderIngestion.ingestFolderAsync(
-              folder,
-              deviceId,
-              userId,
-              (progress) => {
-                if (progress.total > 0) {
-                  updateSyncProgress('scanning', progress.processed, progress.total);
+          await profileAsync(
+            'background.scanFolders',
+            async () => {
+              for (const folder of folders) {
+                try {
+                  const result = await this.deps.folderIngestion.ingestFolderAsync(
+                    folder,
+                    deviceId,
+                    userId,
+                    (progress) => {
+                      if (progress.total > 0) {
+                        updateSyncProgress('scanning', progress.processed, progress.total);
+                      }
+                    },
+                  );
+                  scanned += result.scanned;
+                  discovered += result.discovered;
+                } catch (error) {
+                  await logError('backgroundUpload.scanFolder', error, {
+                    folderPath: folder.folderPath,
+                  });
                 }
-              },
-            );
-            scanned += result.scanned;
-            discovered += result.discovered;
-          } catch (error) {
-            await logError('backgroundUpload.scanFolder', error, { folderPath: folder.folderPath });
-          }
+              }
+            },
+            { attrs: { folders: folders.length } },
+          );
         }
       }
 
@@ -171,10 +219,10 @@ export class BackgroundUploadService {
       const maxFiles =
         configuredMax <= 0 ? UNBOUNDED_CANDIDATE_LIMIT : Math.min(configuredMax, UNBOUNDED_CANDIDATE_LIMIT);
 
-      const candidateRows = await this.deps.lifecycle.getCandidatesAsync(
-        maxFiles,
-        maxRetries,
-        maxHostRetries,
+      const candidateRows = await profileAsync(
+        'background.candidates',
+        () => this.deps.lifecycle.getCandidatesAsync(maxFiles, maxRetries, maxHostRetries),
+        { sentry: false },
       );
       const preferences = await getUiPreferencesAsync().catch(() => null);
       const includeVideos = preferences?.backupVideos ?? true;
@@ -189,10 +237,15 @@ export class BackgroundUploadService {
 
       // Presence checks fan out through a bounded pool; a serial loop over 500
       // rows is hundreds of bridge round trips with no UI breathing room.
-      const existing = await mapWithConcurrencyAsync(
-        videoFree,
-        EXISTENCE_CHECK_CONCURRENCY,
-        async (file) => ({ file, present: await localFileExistsAsync(file.filePath) }),
+      const existing = await profileAsync(
+        'background.existenceChecks',
+        () =>
+          mapWithConcurrencyAsync(
+            videoFree,
+            EXISTENCE_CHECK_CONCURRENCY,
+            async (file) => ({ file, present: await localFileExistsAsync(file.filePath) }),
+          ),
+        { sentry: false },
       );
 
       const candidates: FileEntity[] = [];
@@ -210,7 +263,9 @@ export class BackgroundUploadService {
       }
 
       if (candidates.length === 0) {
-        await this.flushOutboxAsync();
+        await profileAsync('background.flushOutbox', () => this.flushOutboxAsync(), {
+          sentry: false,
+        });
         return this.finish(
           emptyResult({
             scanned,
@@ -244,9 +299,15 @@ export class BackgroundUploadService {
       }
 
       // Phase 3: batch upload, then queue durable publish intents.
-      const batch = await this.deps.uploadManager.uploadBatchAsync(candidates, undefined, {
-        onProgress: (processed) => updateSyncProgress('uploading', processed, candidates.length),
-      });
+      const batch = await profileAsync(
+        'background.uploadBatch',
+        () =>
+          this.deps.uploadManager.uploadBatchAsync(candidates, undefined, {
+            onProgress: (processed) =>
+              updateSyncProgress('uploading', processed, candidates.length),
+          }),
+        { attrs: { candidates: candidates.length } },
+      );
 
       const filesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
       const uploadedFiles: FileEntity[] = [];
@@ -288,11 +349,17 @@ export class BackgroundUploadService {
       if (uploadedFiles.length > 0) {
         updateSyncProgress('publishing', 0, uploadedFiles.length);
         try {
-          const publish = await this.deps.outboxPublisher.enqueueManyAsync(
-            uploadedFiles,
-            deviceId,
-            userId,
-            (processed) => updateSyncProgress('publishing', processed, uploadedFiles.length),
+          const publish = await profileAsync(
+            'background.publish',
+            () =>
+              this.deps.outboxPublisher.enqueueManyAsync(
+                uploadedFiles,
+                deviceId,
+                userId,
+                (processed) =>
+                  updateSyncProgress('publishing', processed, uploadedFiles.length),
+              ),
+            { attrs: { files: uploadedFiles.length } },
           );
           queued += publish.queued;
           failed += publish.failed;
@@ -307,7 +374,9 @@ export class BackgroundUploadService {
         }
       }
 
-      await this.flushOutboxAsync();
+      await profileAsync('background.flushOutbox', () => this.flushOutboxAsync(), {
+        sentry: false,
+      });
 
       console.info(
         `Background upload pass: scanned=${scanned}, discovered=${discovered}, ` +
@@ -341,8 +410,6 @@ export class BackgroundUploadService {
           error: message,
         }),
       );
-    } finally {
-      this.runGate = false;
     }
   }
 

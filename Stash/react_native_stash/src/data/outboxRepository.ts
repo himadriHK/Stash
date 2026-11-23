@@ -49,6 +49,17 @@ class MarkSentRollback extends Error {
   }
 }
 
+const OUTBOX_INSERT_SQL = `INSERT OR IGNORE INTO outbox_messages (
+  id, file_id, correlation_id, message_id, payload, status, attempts,
+  next_attempt_at, last_error, created_at, sent_at
+) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, NULL)`;
+
+const OUTBOX_PUBLISH_STAMP_SQL = `UPDATE files SET
+  request_correlation_id = ?,
+  request_message_id = ?,
+  updated_at = ?
+ WHERE id = ? AND status IN ('Uploaded', 'Failed')`;
+
 function mapOutboxRow(row: OutboxRow): OutboxMessage {
   return {
     id: row.id,
@@ -76,10 +87,7 @@ export class OutboxRepository {
 
     await runTransactionAsync(db, async () => {
       const result = await db.runAsync(
-        `INSERT OR IGNORE INTO outbox_messages (
-          id, file_id, correlation_id, message_id, payload, status, attempts,
-          next_attempt_at, last_error, created_at, sent_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, NULL)`,
+        OUTBOX_INSERT_SQL,
         [id, params.fileId, params.correlationId, params.messageId, params.payload, createdAt],
       );
       if (result.changes === 0) {
@@ -90,11 +98,7 @@ export class OutboxRepository {
       // Stamp the request identity on the file in the same transaction so a
       // response can be matched to the publish attempt that produced it.
       await db.runAsync(
-        `UPDATE files SET
-          request_correlation_id = ?,
-          request_message_id = ?,
-          updated_at = ?
-         WHERE id = ? AND status IN ('Uploaded', 'Failed')`,
+        OUTBOX_PUBLISH_STAMP_SQL,
         [params.correlationId, params.messageId, createdAt, params.fileId],
       );
 
@@ -129,7 +133,8 @@ export class OutboxRepository {
    * Enqueues many upload requests with one transaction per call instead of one
    * per file. Rows that already have an active message are ignored (the unique
    * partial index enforces that), which is why this reports the inserted count
-   * rather than per-file rows.
+   * rather than per-file rows. The INSERT and the correlated files UPDATE are
+   * prepared once; `insertFileEventWithDbAsync` keeps its own statement.
    */
   async enqueueManyAsync(params: readonly EnqueueOutboxParams[]): Promise<number> {
     if (params.length === 0) {
@@ -139,43 +144,45 @@ export class OutboxRepository {
     let inserted = 0;
 
     await runTransactionAsync(db, async () => {
-      for (const entry of params) {
-        const createdAt = nowIso();
-        const result = await db.runAsync(
-          `INSERT OR IGNORE INTO outbox_messages (
-            id, file_id, correlation_id, message_id, payload, status, attempts,
-            next_attempt_at, last_error, created_at, sent_at
-          ) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, NULL)`,
-          [
-            uuid(),
-            entry.fileId,
-            entry.correlationId,
-            entry.messageId,
-            entry.payload,
-            createdAt,
-          ],
-        );
-        if (result.changes === 0) {
-          continue;
+      const insertStatement = await db.prepareAsync(OUTBOX_INSERT_SQL);
+      try {
+        const stampStatement = await db.prepareAsync(OUTBOX_PUBLISH_STAMP_SQL);
+        try {
+          for (const entry of params) {
+            const createdAt = nowIso();
+            const result = await insertStatement.executeAsync([
+              uuid(),
+              entry.fileId,
+              entry.correlationId,
+              entry.messageId,
+              entry.payload,
+              createdAt,
+            ]);
+            if (result.changes === 0) {
+              continue;
+            }
+            inserted += 1;
+
+            await stampStatement.executeAsync([
+              entry.correlationId,
+              entry.messageId,
+              createdAt,
+              entry.fileId,
+            ]);
+
+            await insertFileEventWithDbAsync(db, {
+              fileId: entry.fileId,
+              event: 'publish_queued',
+              correlationId: entry.correlationId,
+              metadata: { messageId: entry.messageId },
+              createdAt,
+            });
+          }
+        } finally {
+          await stampStatement.finalizeAsync();
         }
-        inserted += 1;
-
-        await db.runAsync(
-          `UPDATE files SET
-            request_correlation_id = ?,
-            request_message_id = ?,
-            updated_at = ?
-           WHERE id = ? AND status IN ('Uploaded', 'Failed')`,
-          [entry.correlationId, entry.messageId, createdAt, entry.fileId],
-        );
-
-        await insertFileEventWithDbAsync(db, {
-          fileId: entry.fileId,
-          event: 'publish_queued',
-          correlationId: entry.correlationId,
-          metadata: { messageId: entry.messageId },
-          createdAt,
-        });
+      } finally {
+        await insertStatement.finalizeAsync();
       }
     });
 

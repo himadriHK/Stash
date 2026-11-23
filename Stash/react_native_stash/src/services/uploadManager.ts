@@ -12,6 +12,7 @@ import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
 import { mapWithConcurrencyAsync, yieldToEventLoop } from '../utils/cooperative';
 import { localFileExistsAsync, localFileSizeAsync } from '../utils/fileAccess';
+import { profileAsync } from '../utils/profiler';
 import type { FileLifecycleService } from './fileLifecycleService';
 import type { StorageProvider } from './storage/storageProvider';
 
@@ -102,6 +103,18 @@ export class UploadManager {
     storageTempPath?: string,
     options?: UploadTransferOptions,
   ): Promise<UploadResult> {
+    return profileAsync(
+      'upload.file',
+      () => this.uploadFileInnerAsync(file, storageTempPath, options),
+      { attrs: { size: file.fileSize } },
+    );
+  }
+
+  private async uploadFileInnerAsync(
+    file: FileEntity,
+    storageTempPath?: string,
+    options?: UploadTransferOptions,
+  ): Promise<UploadResult> {
     const remotePath =
       storageTempPath && storageTempPath.trim().length > 0
         ? storageTempPath.trim()
@@ -170,17 +183,22 @@ export class UploadManager {
       file.errorMessage = null;
       file.lastAttemptAt = new Date().toISOString();
 
-      const uploadedPath = await this.storage.uploadFileAsync(
-        {
-          uri: file.filePath,
-          name: file.fileName,
-          mimeType: file.mimeType,
-          size: file.fileSize,
-          contentHash: file.contentHash,
-          signal: options?.signal,
-          onProgress: options?.onProgress,
-        },
-        remotePath,
+      const uploadedPath = await profileAsync(
+        'upload.storage',
+        () =>
+          this.storage.uploadFileAsync(
+            {
+              uri: file.filePath,
+              name: file.fileName,
+              mimeType: file.mimeType,
+              size: file.fileSize,
+              contentHash: file.contentHash,
+              signal: options?.signal,
+              onProgress: options?.onProgress,
+            },
+            remotePath,
+          ),
+        { sentry: false },
       );
 
       const completed = await this.lifecycle.markUploadedAsync(file.id, uploadedPath);
@@ -264,6 +282,18 @@ export class UploadManager {
    * batches, so a pass over 10k files cannot monopolize the JS thread.
    */
   async uploadBatchAsync(
+    files: FileEntity[],
+    options?: UploadTransferOptions,
+    batchOptions?: UploadBatchOptions,
+  ): Promise<UploadBatchResult> {
+    return profileAsync(
+      'upload.batch',
+      () => this.uploadBatchInnerAsync(files, options, batchOptions),
+      { attrs: { files: files.length } },
+    );
+  }
+
+  private async uploadBatchInnerAsync(
     files: FileEntity[],
     options?: UploadTransferOptions,
     batchOptions?: UploadBatchOptions,

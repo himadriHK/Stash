@@ -18,6 +18,7 @@ import { backgroundUploadScheduler, fileLifecycleService, kafkaConsumer, storage
 import { getUiPreferencesAsync } from './src/services/uiPreferences';
 import { appConfig } from './src/config/appConfig';
 import { installGlobalErrorLogger } from './src/utils/errorLogger';
+import { wrapAppRoot } from './src/services/sentry';
 
 /** Starts/stops the scheduled upload pass and Kafka consumer with auth. */
 function BackgroundServices() {
@@ -68,7 +69,7 @@ function Shell() {
   );
 }
 
-export default function App() {
+function App() {
   const [fontsLoaded] = useFonts({ OpenSans_400Regular });
 
   // Route uncaught JS errors (device-only failures included) to the error log
@@ -109,3 +110,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+// Wraps the root so Sentry can track renders/native frames when a DSN is set.
+// Returns App unchanged otherwise (local-first profiling).
+export default wrapAppRoot(App);

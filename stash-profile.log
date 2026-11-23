@@ -1,0 +1,77 @@
+
+===== profile: background.pass =====
+Stash performance profile (cumulative since last reset)
+  generated: 2026-11-22T17:23:32.747Z  spans: 2638  distinct functions: 25
+
+  TOP FUNCTIONS BY SELF TIME (best-effort exclusive; highest = likely bottleneck)
+    function                               calls      self     total      avg      max
+    folder.scan                                1   320.64s   320.64s  320.64s  320.64s
+    folder.hash                             2000   166.27s   166.27s     83.1      170
+    upload.file                               50    64.76s   114.73s    2.29s    5.74s
+    upload.storage                            50    63.93s    98.61s    1.97s    5.39s
+    background.publish                         1    14.03s    14.55s   14.55s   14.55s
+    db.insertMany                             80    10.92s    10.92s      136      231
+    db.hashCacheWrite                          8     7.31s     7.31s      914    1.55s
+    render.Settings                          347     4.29s     4.29s     12.4      183
+    folder.ingest                              1     1.82s   506.96s  506.96s  506.96s
+    background.existenceChecks                 1     1.22s     1.22s    1.22s    1.22s
+    lifecycle.applyResponse                   16       499       499     31.2     43.7
+    db.open                                    1       482       482      482      482
+    render.Gallery                            36       285       285     7.92     57.0
+    render.Folders                            19       244       244     12.9     53.7
+    background.pass                            1       134   539.32s  539.32s  539.32s
+    db.candidates                              1      48.1      48.1     48.1     48.1
+    background.flushOutbox                     2      38.9      38.9     19.4     20.8
+    kafka.record                              16      24.3       524     32.7     49.1
+    background.recoverStale                    1      17.5      17.5     17.5     17.5
+    db.hashCacheLoad                           1      4.13      4.13     4.13     4.13
+    db.contentHashes                           1      3.72      3.72     3.72     3.72
+    background.scanFolders                     1      1.92   506.97s  506.97s  506.97s
+    background.uploadBatch                     1      1.75    16.35s   16.35s   16.35s
+    background.candidates                      1      1.75      49.8     49.8     49.8
+    upload.batch                               1      0.00    16.34s   16.34s   16.34s
+
+  TOP FUNCTIONS BY TOTAL (INCLUSIVE) TIME
+    function                               calls      self     total      avg      max
+    background.pass                            1       134   539.32s  539.32s  539.32s
+    background.scanFolders                     1      1.92   506.97s  506.97s  506.97s
+    folder.ingest                              1     1.82s   506.96s  506.96s  506.96s
+    folder.scan                                1   320.64s   320.64s  320.64s  320.64s
+    folder.hash                             2000   166.27s   166.27s     83.1      170
+    upload.file                               50    64.76s   114.73s    2.29s    5.74s
+    upload.storage                            50    63.93s    98.61s    1.97s    5.39s
+    background.uploadBatch                     1      1.75    16.35s   16.35s   16.35s
+    upload.batch                               1      0.00    16.34s   16.34s   16.34s
+    background.publish                         1    14.03s    14.55s   14.55s   14.55s
+    db.insertMany                             80    10.92s    10.92s      136      231
+    db.hashCacheWrite                          8     7.31s     7.31s      914    1.55s
+    render.Settings                          347     4.29s     4.29s     12.4      183
+    background.existenceChecks                 1     1.22s     1.22s    1.22s    1.22s
+    kafka.record                              16      24.3       524     32.7     49.1
+    lifecycle.applyResponse                   16       499       499     31.2     43.7
+    db.open                                    1       482       482      482      482
+    render.Gallery                            36       285       285     7.92     57.0
+    render.Folders                            19       244       244     12.9     53.7
+    background.candidates                      1      1.75      49.8     49.8     49.8
+    db.candidates                              1      48.1      48.1     48.1     48.1
+    background.flushOutbox                     2      38.9      38.9     19.4     20.8
+    background.recoverStale                    1      17.5      17.5     17.5     17.5
+    db.hashCacheLoad                           1      4.13      4.13     4.13     4.13
+    db.contentHashes                           1      3.72      3.72     3.72     3.72
+
+  SLOWEST RECENT SPANS (>= 16ms)
+     539.32sms  background.pass
+      16.35sms  background.uploadBatch
+      16.34sms  upload.batch
+      14.55sms  background.publish
+       3.23sms  upload.file
+       2.79sms  upload.file
+       2.76sms  upload.storage
+       2.69sms  upload.file
+       2.57sms  upload.file
+       2.42sms  upload.storage
+       2.40sms  upload.storage
+       2.32sms  upload.file
+       2.31sms  upload.file
+       2.31sms  upload.storage
+       2.28sms  upload.file
