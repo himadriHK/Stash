@@ -42,7 +42,6 @@ export interface DiagnosticsSnapshot {
   stuckUploading: number;
   stuckProcessing: number;
   outbox: StatusCount[];
-  hashCacheEntries: number;
   processedMessages: number;
   recentEvents: RecentFileEvent[];
   lastPass: BackgroundPassSnapshot | null;
@@ -134,7 +133,6 @@ export async function collectDiagnosticsAsync(): Promise<DiagnosticsSnapshot> {
     stuckUploading,
     stuckProcessing,
     outbox,
-    hashCacheEntries,
     processedMessages,
     recentEvents,
   ] = await Promise.all([
@@ -166,11 +164,6 @@ export async function collectDiagnosticsAsync(): Promise<DiagnosticsSnapshot> {
     ),
     safeQueryAsync('outbox by status', () => outboxByStatusAsync(db), [] as StatusCount[]),
     safeQueryAsync(
-      'hash cache entries',
-      () => countAsync(db, 'SELECT COUNT(*) AS count FROM file_hash_cache'),
-      0,
-    ),
-    safeQueryAsync(
       'processed messages',
       () => countAsync(db, 'SELECT COUNT(*) AS count FROM processed_messages'),
       0,
@@ -185,7 +178,6 @@ export async function collectDiagnosticsAsync(): Promise<DiagnosticsSnapshot> {
     stuckUploading,
     stuckProcessing,
     outbox,
-    hashCacheEntries,
     processedMessages,
     recentEvents,
     lastPass: getBackgroundPassSnapshot(),

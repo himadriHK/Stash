@@ -1,7 +1,7 @@
 /**
  * FileRepository - SQLite CRUD for FileEntity rows.
  * Mirrors Stash.Maui.Data/Repositories/IFileRepository implementation
- * (get by id/hash, get all, exists by hash, add, update, delete).
+ * (get by id/metadata identity, get all, exists by identity, add, update, delete).
  */
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { getDatabase, parseJsonColumn } from './database';
@@ -22,7 +22,7 @@ export interface FileRow {
   file_name: string;
   file_path: string;
   file_size: number;
-  content_hash: string;
+  metadata_hash: string;
   mime_type: string;
   created_at: string;
   modified_at: string;
@@ -55,7 +55,7 @@ export function mapFileRow(row: FileRow): FileEntity {
     fileName: row.file_name,
     filePath: row.file_path,
     fileSize: row.file_size,
-    contentHash: row.content_hash,
+    metadataHash: row.metadata_hash,
     mimeType: row.mime_type,
     createdAt: row.created_at,
     modifiedAt: row.modified_at,
@@ -94,7 +94,7 @@ function toWriteParams(file: FileEntity): Record<string, string | number | null>
     $file_name: file.fileName,
     $file_path: file.filePath,
     $file_size: file.fileSize,
-    $content_hash: file.contentHash.toLowerCase(),
+    $metadata_hash: file.metadataHash.toLowerCase(),
     $mime_type: file.mimeType,
     $created_at: file.createdAt,
     $modified_at: file.modifiedAt,
@@ -126,14 +126,14 @@ function toWriteParams(file: FileEntity): Record<string, string | number | null>
  * Shared INSERT column/value lists so the single-row and batch inserts cannot
  * drift apart. `addManyAsync` reuses these with an `INSERT OR IGNORE` prefix.
  */
-const FILE_INSERT_COLUMNS = `id, file_name, file_path, file_size, content_hash, mime_type,
+const FILE_INSERT_COLUMNS = `id, file_name, file_path, file_size, metadata_hash, mime_type,
   created_at, modified_at, discovered_at, status, storage_temp_path,
   permanent_path, error_message, retry_count, last_attempt_at,
   device_id, user_id, thumbnails, converted_format, is_deduplicated,
   upload_started_at, processing_started_at, last_response_at,
   request_correlation_id, request_message_id, host_retry_count,
   next_attempt_at, failure_stage, updated_at`;
-const FILE_INSERT_VALUES = `$id, $file_name, $file_path, $file_size, $content_hash, $mime_type,
+const FILE_INSERT_VALUES = `$id, $file_name, $file_path, $file_size, $metadata_hash, $mime_type,
   $created_at, $modified_at, $discovered_at, $status, $storage_temp_path,
   $permanent_path, $error_message, $retry_count, $last_attempt_at,
   $device_id, $user_id, $thumbnails, $converted_format, $is_deduplicated,
@@ -153,11 +153,24 @@ export class FileRepository {
     return row ? mapFileRow(row) : null;
   }
 
-  async getByContentHashAsync(contentHash: string): Promise<FileEntity | null> {
+  async getByMetadataHashAsync(metadataHash: string): Promise<FileEntity | null> {
     const db = await this.open();
     const row = await db.getFirstAsync<FileRow>(
-      'SELECT * FROM files WHERE content_hash = ?',
-      [contentHash.toLowerCase()],
+      'SELECT * FROM files WHERE metadata_hash = ?',
+      [metadataHash.toLowerCase()],
+    );
+    return row ? mapFileRow(row) : null;
+  }
+
+  /**
+   * Response matching: the host echoes the request correlation id, which the
+   * outbox persisted on the row when it published the message.
+   */
+  async getByRequestCorrelationIdAsync(correlationId: string): Promise<FileEntity | null> {
+    const db = await this.open();
+    const row = await db.getFirstAsync<FileRow>(
+      'SELECT * FROM files WHERE request_correlation_id = ? ORDER BY discovered_at DESC LIMIT 1',
+      [correlationId],
     );
     return row ? mapFileRow(row) : null;
   }
@@ -237,34 +250,34 @@ export class FileRepository {
     return rows.map(mapFileRow);
   }
 
-  async existsByContentHashAsync(contentHash: string): Promise<boolean> {
+  async existsByMetadataHashAsync(metadataHash: string): Promise<boolean> {
     const db = await this.open();
     const row = await db.getFirstAsync<{ value: number }>(
-      'SELECT 1 AS value FROM files WHERE content_hash = ? LIMIT 1',
-      [contentHash.toLowerCase()],
+      'SELECT 1 AS value FROM files WHERE metadata_hash = ? LIMIT 1',
+      [metadataHash.toLowerCase()],
     );
     return row !== null;
   }
 
   /**
-   * Every tracked content hash in one query. Ingestion checks each scanned file
-   * for an existing record, so a per-file `EXISTS` would be one bridge round trip
-   * per file; callers preload this set once per pass instead.
+   * Every tracked metadata identity in one query. Ingestion checks each scanned
+   * file for an existing record, so a per-file `EXISTS` would be one bridge
+   * round trip per file; callers preload this set once per pass instead.
    */
-  async getAllContentHashesAsync(): Promise<Set<string>> {
-    return profileAsync('db.contentHashes', () => this.getAllContentHashesInnerAsync(), {
+  async getAllMetadataHashesAsync(): Promise<Set<string>> {
+    return profileAsync('db.metadataHashes', () => this.getAllMetadataHashesInnerAsync(), {
       sentry: false,
     });
   }
 
-  private async getAllContentHashesInnerAsync(): Promise<Set<string>> {
+  private async getAllMetadataHashesInnerAsync(): Promise<Set<string>> {
     const db = await this.open();
-    const rows = await db.getAllAsync<{ content_hash: string }>(
-      'SELECT content_hash FROM files',
+    const rows = await db.getAllAsync<{ metadata_hash: string }>(
+      'SELECT metadata_hash FROM files',
     );
     const hashes = new Set<string>();
     for (const row of rows) {
-      hashes.add(row.content_hash.toLowerCase());
+      hashes.add(row.metadata_hash.toLowerCase());
     }
     return hashes;
   }
@@ -322,8 +335,8 @@ export class FileRepository {
       await runWriteAsync(db, FILE_INSERT_SQL, toWriteParams(file));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/UNIQUE constraint failed: files\.content_hash/i.test(message)) {
-        throw new Error(`A file with this content hash is already tracked: ${file.fileName}`);
+      if (/UNIQUE constraint failed: files\.metadata_hash/i.test(message)) {
+        throw new Error(`A file with this name and size is already tracked: ${file.fileName}`);
       }
       throw error;
     }
@@ -331,8 +344,8 @@ export class FileRepository {
 
   /**
    * Inserts a batch of rows in one transaction. `INSERT OR IGNORE` skips
-   * duplicates (for example a content hash inserted by a concurrent writer) and
-   * the return value is the number of rows actually inserted.
+   * duplicates (for example a metadata identity inserted by a concurrent
+   * writer) and the return value is the number of rows actually inserted.
    */
   async addManyAsync(files: readonly FileEntity[]): Promise<number> {
     return profileAsync('db.insertMany', () => this.addManyInnerAsync(files), {
@@ -361,7 +374,7 @@ export class FileRepository {
       db,
       `UPDATE files SET
         file_name = $file_name, file_path = $file_path, file_size = $file_size,
-        content_hash = $content_hash, mime_type = $mime_type,
+        metadata_hash = $metadata_hash, mime_type = $mime_type,
         created_at = $created_at, modified_at = $modified_at,
         discovered_at = $discovered_at, status = $status,
         storage_temp_path = $storage_temp_path, permanent_path = $permanent_path,

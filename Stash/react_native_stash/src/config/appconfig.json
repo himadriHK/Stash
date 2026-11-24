@@ -16,11 +16,11 @@
     "S3": {
       "Bucket": "stash-uploads-staging",
       "Region": "eu-central-003",
-      "AccessKeyId": "003159e79802b5c0000000002",
-      "SecretAccessKey": "K003eFFNsc065gX9I8GuWgUyg2TOkPg",
+      "AccessKeyId": "foo",
+      "SecretAccessKey": "bar",
       "SessionToken": "",
-      "Endpoint": "https://s3.eu-central-003.backblazeb2.com",
-      "ForcePathStyle": false,
+      "Endpoint": "http://192.168.0.19:9090",
+      "ForcePathStyle": true,
       "Prefix": "",
       "PresignExpirySeconds": 3600
     }

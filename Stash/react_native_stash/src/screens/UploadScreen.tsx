@@ -1,7 +1,7 @@
 /**
  * Upload screen: pick media files (document picker), flag oversize files,
- * hash + dedup into SQLite, then batch upload to S3 and publish Kafka upload
- * requests. Mirrors the documented manual-upload workflow.
+ * dedup by metadata (name + size) into SQLite, then batch upload to S3 and
+ * publish Kafka upload requests. Mirrors the documented manual-upload workflow.
  */
 import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -13,7 +13,7 @@ import { NoteText, ScreenTitle } from '../components/FormText';
 import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
 import { appConfig } from '../config/appConfig';
-import { fileRepository, folderScanner } from '../services/singletons';
+import { fileRepository } from '../services/singletons';
 import { uploadBatchAndPublishAsync } from '../services/uploadActions';
 import { createFileEntity, type FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
@@ -22,6 +22,7 @@ import { FONT_FAMILY, fontSizes } from '../theme/typography';
 import { formatBytesAsMb, formatFileSize } from '../utils/format';
 import { mimeTypeForFile } from '../services/folderScannerService';
 import { forEachChunkedAsync } from '../utils/cooperative';
+import { computeMetadataHash } from '../utils/fileIdentity';
 
 interface PickedFile {
   uri: string;
@@ -30,8 +31,8 @@ interface PickedFile {
 }
 
 const PICKER_TYPES = ['image/*', 'video/*'];
-/** Files hashed per scheduling slice. */
-const UPLOAD_HASH_CHUNK_SIZE = 10;
+/** Picked files prepared per scheduling slice. */
+const UPLOAD_PREPARE_CHUNK_SIZE = 10;
 /** Rows inserted per transaction (29 bound parameters per row). */
 const FILE_INSERT_BATCH_SIZE = 25;
 /** Minimum gap between progress label updates. */
@@ -111,36 +112,31 @@ export function UploadScreen() {
     }
     setBusy(true);
     lastProgressAtRef.current = 0;
-    setProgress(`Hashing 0/${picked.length}`);
+    setProgress(`Preparing 0/${picked.length}`);
     let skipped = 0;
     try {
-      // Deduplication reads one snapshot of tracked hashes instead of one
-      // query per picked file, then inserts in transactional batches.
-      const knownHashes = await fileRepository.getAllContentHashesAsync();
+      // Deduplication reads one snapshot of tracked metadata identities instead
+      // of one query per picked file, then inserts in transactional batches. No
+      // file bytes are read: identity is the name plus the byte size.
+      const knownMetadata = await fileRepository.getAllMetadataHashesAsync();
       const entities: FileEntity[] = [];
-      let hashFailed = 0;
 
       await forEachChunkedAsync(
         picked,
         async (chunk) => {
           for (const file of chunk) {
-            const hash = await folderScanner.computeFileHashAsync(file.uri, file.size);
-            if (!hash) {
-              hashFailed += 1;
-              continue;
-            }
-            const normalized = hash.toLowerCase();
-            if (knownHashes.has(normalized)) {
+            const metadataHash = await computeMetadataHash(file.name, file.size);
+            if (knownMetadata.has(metadataHash)) {
               skipped += 1;
               continue;
             }
-            knownHashes.add(normalized);
+            knownMetadata.add(metadataHash);
             entities.push(
               createFileEntity({
                 fileName: file.name,
                 filePath: file.uri,
                 fileSize: file.size,
-                contentHash: hash,
+                metadataHash,
                 mimeType: mimeTypeForFile(file.name),
                 status: UploadStatus.Pending,
               }),
@@ -148,8 +144,8 @@ export function UploadScreen() {
           }
         },
         {
-          chunkSize: UPLOAD_HASH_CHUNK_SIZE,
-          onProgress: (processed, total) => reportProgress(`Hashing ${processed}/${total}`),
+          chunkSize: UPLOAD_PREPARE_CHUNK_SIZE,
+          onProgress: (processed, total) => reportProgress(`Preparing ${processed}/${total}`),
         },
       );
 
@@ -169,7 +165,7 @@ export function UploadScreen() {
 
       let uploaded = 0;
       let queued = 0;
-      let failed = hashFailed;
+      let failed = 0;
       if (entities.length > 0) {
         const outcome = await uploadBatchAndPublishAsync(entities, (update) => {
           reportProgress(
@@ -273,8 +269,8 @@ export function UploadScreen() {
         ) : null}
 
         <NoteText style={styles.limitNote}>
-          Maximum file size {formatBytesAsMb(maxFileSize)}. Files are hashed locally and
-          deduplicated before upload; duplicates are skipped.
+          Maximum file size {formatBytesAsMb(maxFileSize)}. Files are deduplicated by name
+          and size before upload; the host deduplicates by content. Duplicates are skipped.
         </NoteText>
       </ScrollView>
     </View>

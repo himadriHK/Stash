@@ -34,7 +34,7 @@ export interface ScanResult {
 /** Files whose ownership is stamped per transaction. */
 const OWNERSHIP_CHUNK_SIZE = 250;
 
-/** Scans a folder through the shared ingestion service (hash cache + batching). */
+/** Scans a folder through the shared ingestion service (metadata dedup + batching). */
 export async function scanFolderAsync(
   folder: FolderConfig,
   onProgress?: (progress: FolderIngestionProgress) => void,

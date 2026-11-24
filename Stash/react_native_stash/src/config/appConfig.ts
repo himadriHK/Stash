@@ -65,6 +65,10 @@ export interface UploadSettings {
 export interface BackgroundUploadConfig {
   Enabled: boolean;
   IntervalMinutes: number;
+  /**
+   * Candidate page size. One run keeps fetching and uploading pages until no
+   * eligible file is left; 0 or less reads an internal maximum page.
+   */
   MaxFilesPerRun: number;
 }
 

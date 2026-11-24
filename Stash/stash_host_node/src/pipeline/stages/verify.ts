@@ -37,16 +37,17 @@ export async function verifyStage(ctx: StageContext): Promise<StageOutcome> {
       signal,
     )
   ).toLowerCase();
-  const expected = (job.file_id ?? '').toLowerCase();
 
-  if (actual !== expected) {
-    throw new StageError('Hash mismatch between the uploaded file and the request', {
-      kind: 'terminal',
-      code: 'hash_mismatch',
-    });
-  }
-
-  deps.jobs.updateFields(job.id, { stage: 'deduplicate', progress: 40 });
+  // The request's fileId is a client identifier (a GUID the device salted with
+  // its metadata hash), not a content hash, so the host cannot compare it with
+  // anything. This computed digest is the canonical dedup key for the job: it
+  // names the permanent object and the thumbnails, which is what makes two
+  // devices uploading identical bytes collapse onto one stored file.
+  deps.jobs.updateFields(job.id, {
+    content_hash: actual,
+    stage: 'deduplicate',
+    progress: 40,
+  });
   ctx.event('verify_completed', { data: { hash: actual } });
   return 'continue';
 }

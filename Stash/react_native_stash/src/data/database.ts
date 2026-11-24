@@ -1,10 +1,12 @@
 /**
  * SQLite schema for the app, mirroring Stash.Maui.Data (StashDbContext):
- * `files` (with a unique content hash for deduplication) and `folder_configs`.
+ * `files` (with a unique metadata identity for deduplication) and
+ * `folder_configs`.
  */
 import * as SQLite from 'expo-sqlite';
 import { runTransactionAsync } from './transactionQueue';
 import { profileAsync } from '../utils/profiler';
+import { computeMetadataHash } from '../utils/fileIdentity';
 
 const DB_NAME = 'stash.db';
 
@@ -52,14 +54,6 @@ CREATE TABLE IF NOT EXISTS processed_messages (
   processed_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS file_hash_cache (
-  uri TEXT PRIMARY KEY NOT NULL,
-  size INTEGER NOT NULL,
-  modified_at TEXT,
-  content_hash TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_file_hash_cache_hash ON file_hash_cache(content_hash);
 `;
 
 /**
@@ -76,7 +70,7 @@ CREATE TABLE IF NOT EXISTS files (
   file_name TEXT NOT NULL,
   file_path TEXT NOT NULL,
   file_size INTEGER NOT NULL,
-  content_hash TEXT NOT NULL UNIQUE,
+  metadata_hash TEXT NOT NULL UNIQUE,
   mime_type TEXT NOT NULL,
   created_at TEXT NOT NULL,
   modified_at TEXT NOT NULL,
@@ -116,7 +110,7 @@ CREATE TABLE IF NOT EXISTS folder_configs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_status ON files (status);
-CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files (content_hash);
+CREATE INDEX IF NOT EXISTS idx_files_metadata_hash ON files (metadata_hash);
 CREATE INDEX IF NOT EXISTS idx_files_discovered_at ON files (discovered_at);
 CREATE INDEX IF NOT EXISTS idx_files_status_discovered ON files (status, discovered_at);
 
@@ -235,6 +229,50 @@ async function migrateScalingIndexesAsync(db: SQLite.SQLiteDatabase): Promise<vo
   });
 }
 
+/**
+ * Version 4 migration: replace the content-hash identity with the metadata
+ * identity (normalised name + size). The column is renamed so existing values
+ * stay until they are recomputed, the unique index keeps enforcing one row per
+ * identity, and the hash cache table (which existed only to remember content
+ * digests) is dropped.
+ *
+ * Recomputing may collide when two tracked rows share a name and size; that row
+ * keeps its legacy value rather than failing the upgrade, and a later scan
+ * simply inserts it under the shared identity.
+ */
+async function migrateMetadataIdentityAsync(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(files)');
+  const names = new Set(columns.map((column) => column.name));
+
+  if (!names.has('metadata_hash') && names.has('content_hash')) {
+    await db.execAsync('ALTER TABLE files RENAME COLUMN content_hash TO metadata_hash');
+  } else if (!names.has('metadata_hash')) {
+    await db.execAsync('ALTER TABLE files ADD COLUMN metadata_hash TEXT');
+  }
+
+  await db.execAsync('DROP INDEX IF EXISTS idx_files_content_hash;');
+  await db.execAsync(
+    'CREATE INDEX IF NOT EXISTS idx_files_metadata_hash ON files (metadata_hash);',
+  );
+
+  const rows = await db.getAllAsync<{ id: string; file_name: string; file_size: number }>(
+    'SELECT id, file_name, file_size FROM files',
+  );
+  for (const row of rows) {
+    const metadataHash = await computeMetadataHash(row.file_name ?? '', row.file_size ?? 0);
+    try {
+      await db.runAsync('UPDATE files SET metadata_hash = ? WHERE id = ?', [metadataHash, row.id]);
+    } catch (error) {
+      console.warn(
+        '[database] Kept the legacy identity for a row that collides with an existing name + size.',
+        error,
+      );
+    }
+  }
+
+  await db.execAsync('DROP TABLE IF EXISTS file_hash_cache;');
+}
+
 interface Migration {
   version: number;
   description: string;
@@ -256,6 +294,11 @@ const MIGRATIONS: readonly Migration[] = [
     version: 3,
     description: 'pagination and scan indexes',
     run: migrateScalingIndexesAsync,
+  },
+  {
+    version: 4,
+    description: 'metadata identity instead of content hash',
+    run: migrateMetadataIdentityAsync,
   },
 ];
 
@@ -301,6 +344,28 @@ async function runMigrationsAsync(db: SQLite.SQLiteDatabase): Promise<void> {
 }
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+
+/**
+ * Deletes `stash.db` (rows, schema and its WAL/SHM side files) so the next
+ * `getDatabase()` call recreates it from `SCHEMA` at the latest version.
+ *
+ * The cached open promise is cleared first and the live handle closed, so no
+ * later call can reuse a handle pointing at the deleted file. The device's media
+ * files and the host library are untouched.
+ */
+export async function resetDatabaseAsync(): Promise<void> {
+  const pending = databasePromise;
+  databasePromise = null;
+  if (pending) {
+    try {
+      const db = await pending;
+      await db.closeAsync();
+    } catch {
+      // A failed open never produced a usable handle; deleting the file is enough.
+    }
+  }
+  await SQLite.deleteDatabaseAsync(DB_NAME);
+}
 
 export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {

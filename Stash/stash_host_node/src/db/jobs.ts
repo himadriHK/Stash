@@ -10,6 +10,8 @@ export interface JobRow {
   message_id: string | null;
   file_id: string | null;
   request_file_id: string | null;
+  /** SHA-256 of the downloaded bytes, computed by the verify stage. */
+  content_hash: string | null;
   file_name: string | null;
   file_size: number | null;
   downloaded_size: number | null;
@@ -133,6 +135,7 @@ const JOB_PATCH_FIELDS = [
   'message_id',
   'file_id',
   'request_file_id',
+  'content_hash',
   'file_name',
   'file_size',
   'downloaded_size',

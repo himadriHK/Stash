@@ -259,7 +259,7 @@ export function FilesScreen() {
                 `Size: ${formatFileSize(detailsFile.fileSize)}`,
                 `Status: ${uploadStatusDisplayName(detailsFile.status)}`,
                 `MIME type: ${detailsFile.mimeType}`,
-                `Content hash: ${detailsFile.contentHash}`,
+                `File identity: ${detailsFile.metadataHash}`,
                 `Retries: ${detailsFile.retryCount}`,
                 `Storage temp path: ${detailsFile.storageTempPath ?? '—'}`,
                 `Permanent path: ${detailsFile.permanentPath ?? '—'}`,

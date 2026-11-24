@@ -4,7 +4,7 @@
  * without warning. Mirrors Stash.Maui/Services/BackgroundUploadService.cs.
  *
  * Pass: stale recovery -> auth check -> flush pending outbox -> scan enabled
- * folders (dedup by hash) -> lifecycle candidate selection -> batch
+ * folders (dedup by name + size) -> lifecycle candidate selection -> batch
  * upload -> durable outbox publish -> final flush; dead-letter files that have
  * exhausted their transfer or host retry budgets.
  *
@@ -22,6 +22,7 @@ import type { FolderRepository } from '../data/folderRepository';
 import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
+import { computeUploadFileIdForFile } from '../utils/fileIdentity';
 import { localFileExistsAsync } from '../utils/fileAccess';
 import {
   beginSyncProgress,
@@ -88,9 +89,9 @@ export interface BackgroundUploadDeps {
 }
 
 /**
- * Upper bound for candidates when `BackgroundUpload:MaxFilesPerRun` is zero or
- * negative ("no limit"). Loading an unbounded result set onto a phone would
- * exhaust memory; later passes pick up where this one stopped.
+ * Page size used when `BackgroundUpload:MaxFilesPerRun` is zero or negative
+ * ("no limit"). Loading an unbounded result set onto a phone would exhaust
+ * memory; the pass simply keeps requesting full pages until one comes back short.
  */
 const UNBOUNDED_CANDIDATE_LIMIT = 500;
 /** Candidates whose local presence is probed at the same time. */
@@ -216,161 +217,182 @@ export class BackgroundUploadService {
       // Phase 2: lifecycle-owned candidate selection (status, budgets, backoff,
       // and "no active outbox row" are all enforced in one query).
       const configuredMax = appConfig.BackgroundUpload.MaxFilesPerRun;
-      const maxFiles =
+      // `MaxFilesPerRun` bounds one candidate page, not the whole pass: the page
+      // loop below keeps selecting and uploading pages until nothing eligible is
+      // left, so one "Sync now" (or one background run) drains the backlog in
+      // batches instead of requiring a new trigger per page.
+      const pageSize =
         configuredMax <= 0 ? UNBOUNDED_CANDIDATE_LIMIT : Math.min(configuredMax, UNBOUNDED_CANDIDATE_LIMIT);
 
-      const candidateRows = await profileAsync(
-        'background.candidates',
-        () => this.deps.lifecycle.getCandidatesAsync(maxFiles, maxRetries, maxHostRetries),
-        { sentry: false },
-      );
       const preferences = await getUiPreferencesAsync().catch(() => null);
       const includeVideos = preferences?.backupVideos ?? true;
 
-      if (candidateRows.length > 0) {
-        this.ensureProgress('uploading', candidateRows.length);
-      }
+      // A row whose state does not change on upload would be selected again by
+      // the next page query, so each file is attempted at most once per pass.
+      const attempted = new Set<string>();
+      let totalKnown = 0;
+      let completedFiles = 0;
+      let progressStarted = false;
 
-      const videoFree = includeVideos
-        ? candidateRows
-        : candidateRows.filter((file) => !file.mimeType.toLowerCase().startsWith('video/'));
+      for (;;) {
+        const candidateRows = await profileAsync(
+          'background.candidates',
+          () => this.deps.lifecycle.getCandidatesAsync(pageSize, maxRetries, maxHostRetries),
+          { sentry: false },
+        );
 
-      // Presence checks fan out through a bounded pool; a serial loop over 500
-      // rows is hundreds of bridge round trips with no UI breathing room.
-      const existing = await profileAsync(
-        'background.existenceChecks',
-        () =>
-          mapWithConcurrencyAsync(
-            videoFree,
-            EXISTENCE_CHECK_CONCURRENCY,
-            async (file) => ({ file, present: await localFileExistsAsync(file.filePath) }),
-          ),
-        { sentry: false },
-      );
-
-      const candidates: FileEntity[] = [];
-      const missing: FileEntity[] = [];
-      for (const entry of existing) {
-        if (entry.present) {
-          candidates.push(entry.file);
-        } else {
-          missing.push(entry.file);
+        // Videos excluded by preference are still marked attempted so a page
+        // made up entirely of them cannot stall the loop on the same rows.
+        const unattempted = candidateRows.filter((file) => !attempted.has(file.id));
+        if (unattempted.length === 0) {
+          break;
         }
-      }
+        for (const file of unattempted) {
+          attempted.add(file.id);
+        }
 
-      for (const file of missing) {
-        await this.deps.lifecycle.markLocalMissingAsync(file.id, 'Local file not found.');
-      }
+        const videoFree = includeVideos
+          ? unattempted
+          : unattempted.filter((file) => !file.mimeType.toLowerCase().startsWith('video/'));
 
-      if (candidates.length === 0) {
-        await profileAsync('background.flushOutbox', () => this.flushOutboxAsync(), {
-          sentry: false,
-        });
-        return this.finish(
-          emptyResult({
-            scanned,
-            discovered,
-            uploaded,
-            queued,
-            failed,
-            recoveredUploads,
-            recoveredProcessing,
-          }),
+        // Presence checks fan out through a bounded pool; a serial loop over the
+        // page is hundreds of bridge round trips with no UI breathing room.
+        const existing = await profileAsync(
+          'background.existenceChecks',
+          () =>
+            mapWithConcurrencyAsync(
+              videoFree,
+              EXISTENCE_CHECK_CONCURRENCY,
+              async (file) => ({ file, present: await localFileExistsAsync(file.filePath) }),
+            ),
+          { sentry: false },
         );
-      }
 
-      // Ownership is stamped per chunk in one transaction, not one write per row.
-      const missingOwners = candidates
-        .filter((candidate) => !candidate.deviceId || !candidate.userId)
-        .map((candidate) => {
-          candidate.deviceId = candidate.deviceId || deviceId;
-          candidate.userId = candidate.userId || userId;
-          return candidate.id;
-        });
+        const candidates: FileEntity[] = [];
+        const missing: FileEntity[] = [];
+        for (const entry of existing) {
+          if (entry.present) {
+            candidates.push(entry.file);
+          } else {
+            missing.push(entry.file);
+          }
+        }
 
-      if (missingOwners.length > 0) {
-        await forEachChunkedAsync(
-          missingOwners,
-          async (chunk) => {
-            await this.deps.fileRepository.setOwnershipManyAsync(chunk, deviceId, userId);
-          },
-          { chunkSize: CANDIDATE_CHUNK_SIZE },
+        for (const file of missing) {
+          await this.deps.lifecycle.markLocalMissingAsync(file.id, 'Local file not found.');
+        }
+
+        if (candidates.length === 0) {
+          // A short page means nothing is left behind it; a full page of
+          // untransferable rows (missing files, excluded videos) means the next
+          // page may still hold work.
+          if (candidateRows.length < pageSize) {
+            break;
+          }
+          continue;
+        }
+
+        totalKnown += candidates.length;
+        if (!progressStarted) {
+          this.ensureProgress('uploading', totalKnown);
+          progressStarted = true;
+        }
+
+        // Ownership is stamped per chunk in one transaction, not one write per row.
+        const missingOwners = candidates
+          .filter((candidate) => !candidate.deviceId || !candidate.userId)
+          .map((candidate) => {
+            candidate.deviceId = candidate.deviceId || deviceId;
+            candidate.userId = candidate.userId || userId;
+            return candidate.id;
+          });
+
+        if (missingOwners.length > 0) {
+          await forEachChunkedAsync(
+            missingOwners,
+            async (chunk) => {
+              await this.deps.fileRepository.setOwnershipManyAsync(chunk, deviceId, userId);
+            },
+            { chunkSize: CANDIDATE_CHUNK_SIZE },
+          );
+        }
+
+        // Phase 3: batch upload, then queue durable publish intents.
+        const batch = await profileAsync(
+          'background.uploadBatch',
+          () =>
+            this.deps.uploadManager.uploadBatchAsync(candidates, undefined, {
+              onProgress: (processed) =>
+                updateSyncProgress('uploading', completedFiles + processed, totalKnown),
+            }),
+          { attrs: { candidates: candidates.length } },
         );
-      }
 
-      // Phase 3: batch upload, then queue durable publish intents.
-      const batch = await profileAsync(
-        'background.uploadBatch',
-        () =>
-          this.deps.uploadManager.uploadBatchAsync(candidates, undefined, {
-            onProgress: (processed) =>
-              updateSyncProgress('uploading', processed, candidates.length),
-          }),
-        { attrs: { candidates: candidates.length } },
-      );
+        const filesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+        const uploadedFiles: FileEntity[] = [];
 
-      const filesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-      const uploadedFiles: FileEntity[] = [];
+        for (const uploadResult of batch.results) {
+          const file = filesById.get(uploadResult.fileId);
 
-      for (const uploadResult of batch.results) {
-        const file = filesById.get(uploadResult.fileId);
-
-        if (!uploadResult.success) {
-          failed += 1;
-          if (file) {
-            const fresh = await this.deps.fileRepository.getByIdAsync(file.id);
-            if (fresh) {
-              await this.maybeProduceDeadLetterAsync(fresh, maxRetries, maxHostRetries);
+          if (!uploadResult.success) {
+            failed += 1;
+            if (file) {
+              const fresh = await this.deps.fileRepository.getByIdAsync(file.id);
+              if (fresh) {
+                await this.maybeProduceDeadLetterAsync(fresh, maxRetries, maxHostRetries);
+              }
             }
+            continue;
           }
-          continue;
-        }
 
-        uploaded += 1;
+          uploaded += 1;
 
-        if (!file) {
-          failed += 1;
-          continue;
-        }
-
-        if (!file.storageTempPath) {
-          await this.deps.lifecycle.markTerminalFailureAsync(
-            file.id,
-            'upload',
-            'Upload completed without a temporary storage path.',
-          );
-          failed += 1;
-          continue;
-        }
-
-        uploadedFiles.push(file);
-      }
-
-      if (uploadedFiles.length > 0) {
-        updateSyncProgress('publishing', 0, uploadedFiles.length);
-        try {
-          const publish = await profileAsync(
-            'background.publish',
-            () =>
-              this.deps.outboxPublisher.enqueueManyAsync(
-                uploadedFiles,
-                deviceId,
-                userId,
-                (processed) =>
-                  updateSyncProgress('publishing', processed, uploadedFiles.length),
-              ),
-            { attrs: { files: uploadedFiles.length } },
-          );
-          queued += publish.queued;
-          failed += publish.failed;
-          if (publish.dead > 0) {
-            console.warn(`Outbox dead-lettered ${publish.dead} upload request(s) during the pass.`);
+          if (!file) {
+            failed += 1;
+            continue;
           }
-        } catch (error) {
-          console.warn(
-            `Could not persist publish intents for ${uploadedFiles.length} file(s): ${messageOf(error)}`,
-          );
-          failed += uploadedFiles.length;
+
+          if (!file.storageTempPath) {
+            await this.deps.lifecycle.markTerminalFailureAsync(
+              file.id,
+              'upload',
+              'Upload completed without a temporary storage path.',
+            );
+            failed += 1;
+            continue;
+          }
+
+          uploadedFiles.push(file);
+        }
+
+        completedFiles += candidates.length;
+
+        if (uploadedFiles.length > 0) {
+          updateSyncProgress('publishing', 0, uploadedFiles.length);
+          try {
+            const publish = await profileAsync(
+              'background.publish',
+              () =>
+                this.deps.outboxPublisher.enqueueManyAsync(
+                  uploadedFiles,
+                  deviceId,
+                  userId,
+                  (processed) =>
+                    updateSyncProgress('publishing', processed, uploadedFiles.length),
+                ),
+              { attrs: { files: uploadedFiles.length } },
+            );
+            queued += publish.queued;
+            failed += publish.failed;
+            if (publish.dead > 0) {
+              console.warn(`Outbox dead-lettered ${publish.dead} upload request(s) during the pass.`);
+            }
+          } catch (error) {
+            console.warn(
+              `Could not persist publish intents for ${uploadedFiles.length} file(s): ${messageOf(error)}`,
+            );
+            failed += uploadedFiles.length;
+          }
         }
       }
 
@@ -462,10 +484,11 @@ export class BackgroundUploadService {
       return;
     }
     try {
+      const hostFileId = await computeUploadFileIdForFile(file);
       await this.deps.kafkaProducer.produceDeadLetterAsync(
-        file.contentHash,
+        hostFileId,
         JSON.stringify({
-          fileId: file.contentHash,
+          fileId: hostFileId,
           fileName: file.fileName,
           filePath: file.filePath,
           fileSize: file.fileSize,

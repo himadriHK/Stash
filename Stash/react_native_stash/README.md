@@ -28,7 +28,7 @@ feature set documented in `FlutterStash*.md` and `ReactNativeStashPlan.md`.
   (whole files are not buffered in JS); web uploads the picked `Blob` with
   `fetch`. Byte-aware batched uploads (`BatchSize`, `MaxConcurrentBytes`), retry state
   (`MaxRetries`), SHA-256 dedup, 500 MB client limit, logical temp path
-  `/temp/uploads/{deviceId}/{contentHash}/{fileName}`, and a manual Upload screen (document
+  `/temp/uploads/{deviceId}/{fileId}/{fileName}`, and a manual Upload screen (document
   picker → hash → dedup → batch → publish).
 - **Kafka proxy transport** — `kafka_proxy_vercel/` Vercel Function produces
   with the native Confluent client, and the app **polls** `GET /api/messages`
@@ -104,7 +104,7 @@ The Identity API may be the Vercel function in [`kafka_proxy_vercel`](../kafka_p
 | `Storage.S3.PresignExpirySeconds` | `3600` | Presigned URL lifetime; clamped to 1…604800 seconds. |
 
 The bucket key is the optional prefix plus the logical path without its leading
-slash, so the default object key is `temp/uploads/{deviceId}/{contentHash}/{fileName}`. Because the key contains the content hash, a repeated upload reuses the existing object (checked with HEAD).
+slash, so the default object key is `temp/uploads/{deviceId}/{fileId}/{fileName}`. Because the key contains the client file id (GUID salted with the metadata hash), re-uploading the same row reuses the existing object (checked with HEAD).
 
 Non-secret settings stay in `appconfig.json`:
 
@@ -143,7 +143,7 @@ src/
 
 Upload requests are published with `version: 2` and carry:
 
-- `storageTempPath` — the logical path `/temp/uploads/{deviceId}/{contentHash}/{fileName}`
+- `storageTempPath` — the logical path `/temp/uploads/{deviceId}/{fileId}/{fileName}`
 - `storageProvider` — `"S3"`
 
 The host/consumer must accept version 2, read the object from the configured S3

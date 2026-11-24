@@ -14,12 +14,12 @@ afterAll(() => {
 });
 
 describe('migrations', () => {
-  it('migrates a fresh database to v1 with the WAL pragmas', () => {
+  it('migrates a fresh database to the latest version with the WAL pragmas', () => {
     const dbPath = path.join(root, 'fresh', 'nested', 'stash.db');
     const db = openDatabase(dbPath);
 
+    expect(LATEST_SCHEMA_VERSION).toBe(2);
     expect(db.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION);
-    expect(db.pragma('user_version', { simple: true })).toBe(1);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('synchronous', { simple: true })).toBe(1);
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -44,6 +44,11 @@ describe('migrations', () => {
     expect(indexNames).toContain('idx_job_events_job');
     expect(indexNames).toContain('idx_outbox_status_next_attempt');
 
+    const jobColumns = (
+      db.prepare('PRAGMA table_info(jobs)').all() as { name: string }[]
+    ).map((column) => column.name);
+    expect(jobColumns).toContain('content_hash');
+
     closeDatabase(db);
   });
 
@@ -60,9 +65,9 @@ describe('migrations', () => {
     closeDatabase(first);
 
     const second = openDatabase(dbPath);
-    expect(second.pragma('user_version', { simple: true })).toBe(1);
-    expect(migrate(second)).toBe(1);
-    expect(migrate(second)).toBe(1);
+    expect(second.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION);
+    expect(migrate(second)).toBe(LATEST_SCHEMA_VERSION);
+    expect(migrate(second)).toBe(LATEST_SCHEMA_VERSION);
     const row = second.prepare('SELECT COUNT(*) AS count FROM jobs').get() as { count: number };
     expect(row.count).toBe(1);
     closeDatabase(second);

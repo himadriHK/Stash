@@ -8,7 +8,7 @@ export async function deduplicateStage(ctx: StageContext): Promise<StageOutcome>
   const classification = await resolveClassification(job, sourcePath);
   const permanentPath = deps.local.permanentLogical(
     job.user_id ?? '',
-    job.file_id ?? '',
+    (job.content_hash ?? '').toLowerCase(),
     classification.targetExtension,
   );
 

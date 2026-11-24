@@ -100,12 +100,28 @@ CREATE TABLE IF NOT EXISTS component_checks (
 );
 `;
 
+/**
+ * The request `file_id` is a client identifier, so the content hash the host
+ * verifies the download with needs its own column.
+ */
+const V2_CONTENT_HASH = `
+ALTER TABLE jobs ADD COLUMN content_hash TEXT;
+CREATE INDEX IF NOT EXISTS idx_jobs_content_hash ON jobs(content_hash);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
     name: 'initial schema',
     up(db) {
       db.exec(V1_SCHEMA);
+    },
+  },
+  {
+    version: 2,
+    name: 'host-computed content hash',
+    up(db) {
+      db.exec(V2_CONTENT_HASH);
     },
   },
 ];

@@ -847,7 +847,8 @@ overrides it (`stash-upload-request`, `stash-dlq-handler`).
 
 See §11. `Storage.Provider` is `S3`; `Storage.S3.*` supplies the bucket, region, credentials,
 endpoint/path-style, prefix and presign expiry. `UploadSettings.MaxFileSizeBytes` (500 MB),
-`BatchSize` (10) and `BackgroundUpload.MaxFilesPerRun` (50) bound the work per pass.
+`BatchSize` (10) bounds each upload batch and `BackgroundUpload.MaxFilesPerRun` (50)
+bounds each candidate page, which a single pass repeats until the backlog is drained.
 
 ---
 

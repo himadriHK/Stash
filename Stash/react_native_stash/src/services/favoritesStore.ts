@@ -1,9 +1,8 @@
 /**
  * Local favorites for the Gallery's "Favorites" filter.
  *
- * Favorites are a per-install UI preference keyed by content hash (the same
- * identity the dedup pipeline uses), so the SQLite schema is untouched and a
- * renamed file keeps its favorite state. Values are not synced to the host.
+ * Favorites are a per-install UI preference keyed by the local row id, so the
+ * SQLite schema is untouched. Values are not synced to the host.
  */
 import type { FileEntity } from '../models/fileEntity';
 import { getAsync, setAsync } from '../utils/storage';
@@ -13,7 +12,7 @@ const FAVORITES_KEY = 'stash.ui.favorites';
 let cache: Set<string> | null = null;
 
 function favoriteKey(file: FileEntity): string {
-  return file.contentHash.toLowerCase();
+  return file.id;
 }
 
 export async function loadFavoritesAsync(): Promise<Set<string>> {

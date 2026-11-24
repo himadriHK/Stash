@@ -2,7 +2,7 @@
  * Storage abstraction used by the upload/download pipeline.
  *
  * Logical remote paths are app-owned, leading-slash paths (for example
- * `/temp/uploads/<deviceId>/<contentHash>/photo.jpg`). Providers map them onto their own
+ * `/temp/uploads/<deviceId>/<fileId>/photo.jpg`). Providers map them onto their own
  * namespace; they never leak provider-specific identifiers to the caller.
  */
 export interface StorageUploadSource {
@@ -10,8 +10,8 @@ export interface StorageUploadSource {
   name: string;
   mimeType?: string;
   size?: number;
-  /** Lowercase SHA-256 of the file content; used for dedup and the object key. */
-  contentHash?: string;
+  /** Client file identifier (GUID salted with the metadata hash); object key segment. */
+  fileId?: string;
   /** Cancels an in-flight transfer when aborted. */
   signal?: AbortSignal;
   /** Reports transfer progress when the platform supports it. */

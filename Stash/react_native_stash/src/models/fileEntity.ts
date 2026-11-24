@@ -10,8 +10,11 @@ export interface FileEntity {
   fileName: string;
   filePath: string;
   fileSize: number;
-  /** SHA-256 content hash; the database enforces uniqueness. */
-  contentHash: string;
+  /**
+   * Local dedup identity: SHA-256 over the normalised name and the byte size
+   * (no file content is read). The database enforces uniqueness.
+   */
+  metadataHash: string;
   mimeType: string;
   createdAt: string;
   modifiedAt: string;
@@ -42,7 +45,7 @@ export interface FileEntity {
 }
 
 export type FileEntityDraft = Partial<FileEntity> &
-  Pick<FileEntity, 'fileName' | 'filePath' | 'contentHash'>;
+  Pick<FileEntity, 'fileName' | 'filePath' | 'metadataHash'>;
 
 export function createFileEntity(draft: FileEntityDraft): FileEntity {
   const now = new Date().toISOString();
@@ -52,7 +55,7 @@ export function createFileEntity(draft: FileEntityDraft): FileEntity {
     fileName: draft.fileName,
     filePath: draft.filePath,
     fileSize: draft.fileSize ?? 0,
-    contentHash: draft.contentHash,
+    metadataHash: draft.metadataHash,
     mimeType: draft.mimeType ?? 'application/octet-stream',
     createdAt: draft.createdAt ?? now,
     modifiedAt: draft.modifiedAt ?? now,

@@ -1,6 +1,8 @@
 /**
  * FolderScannerService - discovers media files in configured folders and
- * computes SHA-256 content hashes. Mirrors Stash.Maui/Services/FolderScannerService.cs.
+ * reports their metadata (name, size, timestamps). File contents are never read
+ * here: the host hashes the bytes it downloads. Mirrors
+ * Stash.Maui/Services/FolderScannerService.cs.
  *
  * Scanning uses the legacy async `expo-file-system/legacy` API
  * (`readDirectoryAsync` + `getInfoAsync`): the synchronous `Directory.list()`
@@ -17,17 +19,13 @@
  * SAF URIs. Plain `file://` paths (manual entry / iOS) get child *names* from
  * `readDirectoryAsync`, so child URIs are built as `dirUri + '/' + name`.
  * Legacy `FileInfo` has no `creationTime`, so `createdAt` is derived from
- * `modificationTime`. Web keeps the browser-only hash path and rejects folder
- * scans.
+ * `modificationTime`. Web rejects folder scans.
  */
 import { Platform } from 'react-native';
-import { File, Paths } from 'expo-file-system';
-import { copyAsync, getInfoAsync, readDirectoryAsync, StorageAccessFramework } from 'expo-file-system/legacy';
-import { sha256 } from 'js-sha256';
+import { getInfoAsync, readDirectoryAsync, StorageAccessFramework } from 'expo-file-system/legacy';
 import type { FolderConfig } from '../models/folderConfig';
 import { getMimeTypeFromFileName } from '../models/mediaPatterns';
 import { logError } from '../utils/errorLogger';
-import { readFileBytesAsync } from '../utils/fileAccess';
 import { isStoragePermissionError } from '../utils/storagePermissions';
 import { mapWithConcurrencyAsync, shouldYield, yieldToEventLoop } from '../utils/cooperative';
 import { profileAsync } from '../utils/profiler';
@@ -39,7 +37,7 @@ export interface ScannedFile {
   size: number;
   createdAt: string;
   modifiedAt: string;
-  /** Raw epoch milliseconds from the platform, used for hash-cache keys. */
+  /** Raw epoch milliseconds from the platform. */
   modifiedAtMs?: number | null;
 }
 
@@ -186,14 +184,6 @@ async function listDirectoryEntriesAsync(directoryUri: string): Promise<string[]
     return StorageAccessFramework.readDirectoryAsync(directoryUri);
   }
   return readDirectoryAsync(directoryUri);
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  let hex = '';
-  for (let index = 0; index < bytes.length; index += 1) {
-    hex += bytes[index].toString(16).padStart(2, '0');
-  }
-  return hex;
 }
 
 export class FolderScannerService {
@@ -352,95 +342,6 @@ export class FolderScannerService {
       if (shouldYield(state.processed)) {
         await yieldToEventLoop();
       }
-    }
-  }
-
-  /**
-   * Computes a lowercase hexadecimal SHA-256 hash of the file contents.
-   *
-   * Native hashing runs in the Expo module (`File.digest`) on the platform IO
-   * dispatcher. Web uses `crypto.subtle` when available and falls back to
-   * `js-sha256` over the browser-read bytes.
-   */
-  async computeFileHashAsync(uri: string, knownSize?: number): Promise<string> {
-    void knownSize;
-
-    return profileAsync(
-      'folder.hash',
-      async () => {
-        if (Platform.OS === 'web') {
-          return this.computeWebHashAsync(uri);
-        }
-
-        const file = new File(uri);
-        if (!file.exists && !uri.startsWith('content://')) {
-          throw new Error(`File cannot be read: ${uri}`);
-        }
-
-        try {
-          const hash = await file.digest('SHA-256');
-          return hash.toLowerCase();
-        } catch (error) {
-          if (uri.startsWith('content://')) {
-            return this.digestContentUriViaCacheAsync(uri, error);
-          }
-          await logError('folderScanner.hash.digest', error, { uri });
-          throw error;
-        }
-      },
-      { sentry: false },
-    );
-  }
-
-  private async computeWebHashAsync(uri: string): Promise<string> {
-    const bytes = await readFileBytesAsync(uri);
-    const subtle = typeof crypto !== 'undefined' ? crypto.subtle : undefined;
-
-    if (subtle) {
-      try {
-        const digest = await subtle.digest('SHA-256', bytes as unknown as BufferSource);
-        return bytesToHex(new Uint8Array(digest));
-      } catch (error) {
-        await logError('folderScanner.hash.webSubtle', error, { uri });
-      }
-    }
-
-    const hash = sha256.create();
-    hash.update(bytes);
-    return hash.hex();
-  }
-
-  private async digestContentUriViaCacheAsync(
-    uri: string,
-    originalError: unknown,
-  ): Promise<string> {
-    await logError('folderScanner.hash.contentUriDigest', originalError, { uri });
-    const tempUri = `${Paths.cache.uri}hash_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2, 9)}`;
-
-    try {
-      await copyAsync({ from: uri, to: tempUri });
-      const cached = new File(tempUri);
-      if (!cached.exists) {
-        throw new Error(`Copied file not found: ${tempUri}`);
-      }
-      const hash = await cached.digest('SHA-256');
-      return hash.toLowerCase();
-    } catch (fallbackError) {
-      await logError('folderScanner.hash.contentUriFallback', fallbackError, { uri, tempUri });
-      throw new Error(
-        `Unable to hash content:// URI: ${uri}. Native digest failed (${messageOf(
-          originalError,
-        )}) and the cache-copy fallback failed (${messageOf(fallbackError)}).`,
-      );
-    } finally {
-      try {
-        const temporary = new File(tempUri);
-        if (temporary.exists) {
-          temporary.delete();
-        }
-      } catch {}
     }
   }
 

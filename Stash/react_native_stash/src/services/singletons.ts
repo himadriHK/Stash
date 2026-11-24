@@ -7,7 +7,6 @@
 import { appConfig } from '../config/appConfig';
 import { FileRepository } from '../data/fileRepository';
 import { FolderRepository } from '../data/folderRepository';
-import { HashCacheRepository } from '../data/hashCacheRepository';
 import { OutboxRepository } from '../data/outboxRepository';
 import { BackgroundUploadService } from './backgroundUploadService';
 import { BackgroundUploadScheduler } from './backgroundUploadScheduler';
@@ -24,13 +23,11 @@ import { UploadManager } from './uploadManager';
 
 export const fileRepository = new FileRepository();
 export const folderRepository = new FolderRepository();
-export const hashCacheRepository = new HashCacheRepository();
 export const folderScanner = folderScannerService;
 export const folderIngestionService = new FolderIngestionService(
   folderScannerService,
   fileRepository,
   folderRepository,
-  hashCacheRepository,
 );
 
 /** Kafka traffic always goes through the Stash Kafka proxy (no broker credentials on the device). */

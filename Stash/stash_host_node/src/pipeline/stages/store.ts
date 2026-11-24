@@ -16,9 +16,10 @@ export async function storeStage(ctx: StageContext): Promise<StageOutcome> {
   const tempDir = await ensureTempDir(deps.local, job);
   const sourcePath = tempSourcePath(tempDir, job);
   const classification = await resolveClassification(job, sourcePath);
+  const contentHash = (job.content_hash ?? '').toLowerCase();
   const permanentPath = deps.local.permanentLogical(
     job.user_id ?? '',
-    job.file_id ?? '',
+    contentHash,
     classification.targetExtension,
   );
 
@@ -32,7 +33,7 @@ export async function storeStage(ctx: StageContext): Promise<StageOutcome> {
   for (const size of THUMBNAIL_SIZES) {
     const tempThumb = path.join(tempDir, 'thumbs', `thumb-${size}.jpg`);
     if (!(await fileExists(tempThumb))) continue;
-    const logical = deps.local.thumbnailLogical(job.user_id ?? '', job.file_id ?? '', size);
+    const logical = deps.local.thumbnailLogical(job.user_id ?? '', contentHash, size);
     await deps.local.atomicCopyFile(tempThumb, logical);
     thumbnails[String(size)] = logical;
   }

@@ -86,6 +86,7 @@ interface CreateJobOptions {
   fileName?: string;
   mimeType?: string;
   maxAttempts?: number;
+  deviceId?: string;
 }
 
 function createJob(buffer: Buffer, options: CreateJobOptions = {}) {
@@ -109,7 +110,7 @@ function createJob(buffer: Buffer, options: CreateJobOptions = {}) {
     storageTempPath: `/temp/uploads/user-1/${fileId}/${fileName}`,
     storageKey,
     userId: 'user-1',
-    deviceId: 'device-1',
+    deviceId: options.deviceId ?? 'device-1',
     maxAttempts: options.maxAttempts ?? workspace.env.JOB_MAX_ATTEMPTS,
     tempDir: path.join(workspace.env.TEMP_DIR, 'jobs', id),
   });
@@ -283,32 +284,50 @@ describe('pipeline runner', () => {
     expect(Object.keys(payload.thumbnails)).toHaveLength(3);
   });
 
-  it('fails a hash mismatch, publishes FAILED, then deletes S3', async () => {
+  it('stores by the host-computed content hash, not the client file id', async () => {
     const buffer = await createImage('jpeg');
-    const wrongFileId = 'b'.repeat(64);
-    const { job, storageKey } = createJob(buffer, { fileId: wrongFileId });
+    const clientFileId = 'b'.repeat(64);
+    const contentHash = sha256(buffer);
+    const { job, storageKey } = createJob(buffer, { fileId: clientFileId });
     const publisher = new FakePublisher();
 
     const { job: final } = await runQueued(publisher);
 
-    expect(final?.status).toBe('failed');
-    expect(final?.stage).toBe('done');
-    expect(final?.failed_stage).toBe('verify');
-    expect(final?.error_code).toBe('hash_mismatch');
-    expect(final?.permanent_path).toBeNull();
+    expect(contentHash).not.toBe(clientFileId);
+    expect(final?.status).toBe('completed');
+    expect(final?.content_hash).toBe(contentHash);
+    expect(final?.file_id).toBe(clientFileId);
+    expect(final?.permanent_path).toBe(`/backups/user-1/${contentHash}.jpg`);
 
     const payload = parseResponsePayload(
       outbox.getByJobAndKind(job.id, 'response')?.payload ?? '{}',
     );
-    expect(payload.status).toBe('FAILED');
-    expect(payload.permanentPath).toBeNull();
-    expect(payload.error).toMatch(/hash mismatch/i);
+    expect(payload.status).toBe('COMPLETED');
+    expect(payload.fileId).toBe(clientFileId);
+    expect(payload.permanentPath).toBe(`/backups/user-1/${contentHash}.jpg`);
     expect(payload.version).toBe(1);
     expect(fakeS3.deleted).toContain(storageKey);
 
     await expect(
-      local.exists(local.permanentLogical('user-1', wrongFileId, '.jpg')),
-    ).resolves.toBe(false);
+      local.exists(local.permanentLogical('user-1', contentHash, '.jpg')),
+    ).resolves.toBe(true);
+  });
+
+  it('deduplicates identical content uploaded from two devices with different file ids', async () => {
+    const buffer = await createImage('jpeg');
+    const first = createJob(buffer, { fileId: 'c'.repeat(64) });
+    const second = createJob(buffer, { fileId: 'd'.repeat(64), deviceId: 'device-2' });
+    const contentHash = sha256(buffer);
+
+    const { job: firstFinal } = await runQueued(new FakePublisher());
+    expect(firstFinal?.id).toBe(first.job.id);
+    expect(firstFinal?.deduplicated).toBe(0);
+
+    const { job: secondFinal } = await runQueued(new FakePublisher());
+    expect(secondFinal?.id).toBe(second.job.id);
+    expect(secondFinal?.status).toBe('completed');
+    expect(secondFinal?.deduplicated).toBe(1);
+    expect(secondFinal?.permanent_path).toBe(`/backups/user-1/${contentHash}.jpg`);
   });
 
   it('keeps S3 staging when the response outbox row is dead', async () => {

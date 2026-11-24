@@ -4,7 +4,7 @@ A complete guide to installing, configuring and operating the React Native
 (Expo) recreation of **Stash.Maui**. The app keeps the MAUI look — exact
 palette, OpenSans typography, form/button styling, light + dark appearance —
 and reimplements the documented feature set: Identity API authentication,
-SQLite storage with SHA-256 deduplication, folder scanning, direct S3 upload
+SQLite storage with name + size deduplication, folder scanning, direct S3 upload
 through presigned AWS Signature V4 URLs, Kafka messaging through the Stash proxy and the
 15-minute background upload pass.
 
@@ -143,7 +143,7 @@ Set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` to `https://<vercel-project>.vercel.app`
 | --- | --- | --- |
 | `BackgroundUpload.Enabled` | `true` | Turns the periodic pass on/off. |
 | `BackgroundUpload.IntervalMinutes` | `15` | Pass interval, matching the documented 15-minute cadence. |
-| `BackgroundUpload.MaxFilesPerRun` | `50` | Cap of files handled per run (`0` or less = unlimited). |
+| `BackgroundUpload.MaxFilesPerRun` | `50` | Candidates selected per page; a run keeps uploading pages until no eligible file is left (`0` or less = internal maximum page). |
 
 ### 4.4 Storage (S3)
 
@@ -176,8 +176,8 @@ generates a presigned URL on the device and transfers directly to S3:
   expired token makes requests fail with `403`.
 - **Prefix:** the bucket key is the optional prefix plus the logical path
   without its leading slash. With `Prefix = "stash"`, the default temp object is
-  `stash/temp/uploads/{deviceId}/{contentHash}/{fileName}`. The app still stores and
-  sends the logical path `/temp/uploads/{deviceId}/{contentHash}/{fileName}`.
+  `stash/temp/uploads/{deviceId}/{fileId}/{fileName}`. The app still stores and
+  sends the logical path `/temp/uploads/{deviceId}/{fileId}/{fileName}`.
 - **Presign expiry:** choose a value long enough for the upload/download to
   finish but no longer than the credentials' remaining lifetime. The signer
   clamps out-of-range values to 1–604800 seconds.
@@ -304,7 +304,7 @@ npx expo export --platform android  # JS bundle for Android
 | What | Where | How |
 | --- | --- | --- |
 | Session (tokens, user, device id) | Secure store (`localStorage` on web) | Log out in the app, or clear site data in the browser |
-| SQLite database (`stash.db`) | App sandbox | Web: clear site data. Native: reinstall the app / clear Expo Go data |
+| SQLite database (`stash.db`) | App sandbox | Settings → Local data → Reset database (deletes `stash.db` and recreates the latest schema on next access). Web alternative: clear site data |
 | Theme choice | `stash.theme.mode` key | Switch back to *System* in Settings |
 
 ---
@@ -364,7 +364,7 @@ The signed-in shell has five tabs plus a header with the app title and a
   (name, colour and Ionicon come from the documented status contract).
 - **Pull down to refresh** — runs the background upload pass immediately
   (scan enabled folders → dedup → upload → publish → bookkeeping).
-- **Tap a card** → details dialog: path, size, status, MIME type, SHA-256 hash,
+- **Tap a card** → details dialog: path, size, status, MIME type, file identity,
   retries, storage temp path (the logical S3 path), permanent path, device id,
   last attempt, error text.
 - **Tap ⋯ on a card** → actions: **Retry upload** (only for `Failed` /
@@ -378,9 +378,9 @@ The signed-in shell has five tabs plus a header with the app title and a
    (`expo-document-picker`, `image/*` + `video/*`, multi-select).
 2. Picked files are listed with sizes; a file above the 500 MB limit is flagged,
    and the ✕ on a row removes it from the selection.
-3. Tap **Upload Files**. The app hashes each file (native
-   `File.digest('SHA-256')` on iOS/Android, `crypto.subtle` on web), skips
-   duplicates already present by hash, inserts new rows as `Pending`,
+3. Tap **Upload Files**. The app computes each file's metadata identity
+   (`computeMetadataHash(name, size)` - no file bytes are read), skips
+   duplicates already present by that identity, inserts new rows as `Pending`,
    uploads to S3 in batches through presigned PUT URLs, and publishes Kafka
    upload requests for the uploaded files.
 4. A toast summarises the outcome, e.g.
@@ -411,9 +411,9 @@ Signing in is required; otherwise the app shows *“Sign in to upload files.”*
   `*.jpg *.jpeg *.png *.heic *.heif *.raw *.dng *.cr2 *.nef *.arw *.mov *.mp4
   *.avif *.webp`, with recursive subfolder walks.
 
-The scanner enumerates the configured folder with `Directory.list()` and hashes
-files natively with `File.digest('SHA-256')`. Folder scanning is native-only; in
-the browser use Upload → Pick Files.
+The scanner enumerates the configured folder with `Directory.list()` and records
+name, size and timestamps; file contents are never read. Folder scanning is
+native-only; in the browser use Upload → Pick Files.
 
 ### 7.4 Settings
 
@@ -466,11 +466,13 @@ For each file the app records a row in `files` and moves it through:
 
 Steps performed by the upload manager:
 
-1. **Hash** — SHA-256 of the file contents: native `File.digest('SHA-256')`
-   (with a `content://` cache-copy fallback); web `crypto.subtle` with a
-   `js-sha256` fallback.
-2. **Dedup** — `existsByContentHashAsync(hash)`; `content_hash` is `UNIQUE`, so
-   the same bytes are never uploaded twice.
+1. **Identity** — `computeMetadataHash(fileName, fileSize)`: SHA-256 over the
+   normalised name and the byte size. No file content is read, so there is no
+   digest of the bytes on the device.
+2. **Dedup** — the tracked identity set is preloaded (`getAllMetadataHashesAsync`)
+   and `metadata_hash` is `UNIQUE`, so a file with the same name and size is not
+   inserted twice. The host deduplicates the uploaded bytes by content hash, so
+   identical files from other devices still collapse there.
 3. **Batch** — files are grouped into byte-aware batches: at most
    `UploadSettings.BatchSize` transfers and at most
    `UploadSettings.MaxConcurrentBytes` declared bytes per batch. A single file
@@ -486,7 +488,7 @@ Steps performed by the upload manager:
      copied to the cache and the temporary copy is deleted afterwards.
    - **Web:** the picked `Blob` is uploaded with `fetch`; the browser path
      buffers the file in memory.
-   The logical path `/temp/uploads/{deviceId}/{contentHash}/{fileName}` is
+   The logical path `/temp/uploads/{deviceId}/{fileId}/{fileName}` is
    persisted in SQLite (`storage_temp_path`) and is the value sent to Kafka.
    Before presigning a `PUT`, the provider HEADs the key; when the object already
    exists (same content hash) the transfer is skipped and the path is reused. No physical-name
@@ -547,8 +549,9 @@ documented polling fallback is used:
 - It fires **only while the app is in the `active` AppState**; when the app
   goes to background the timer is cleared, and on return it is re-armed.
 - Each run: scan enabled folders → hash/dedup → select candidates → batch
-  upload → publish Kafka requests → update statuses, limited to
-  `MaxFilesPerRun` (50) files.
+  upload → publish Kafka requests → update statuses, repeating in
+  `MaxFilesPerRun`-sized (50) candidate pages until no eligible file is left,
+  so every run drains the whole backlog.
 - The Files pull-to-refresh gesture runs the same pass on demand.
 - `BackgroundUpload.Enabled: false` disables both the timer and the pass.
 - The Kafka response consumer runs in the same lifecycle, so incoming
@@ -561,11 +564,11 @@ documented polling fallback is used:
 Database file: `stash.db` (WAL mode).
 
 `files` — one row per discovered/selected file:
-`id`, `file_name`, `file_path`, `file_size`, `content_hash` (UNIQUE),
+`id`, `file_name`, `file_path`, `file_size`, `metadata_hash` (UNIQUE),
 `mime_type`, `created_at`, `modified_at`, `discovered_at`, `status`,
 `storage_temp_path`, `permanent_path`, `error_message`, `retry_count`,
 `last_attempt_at`, `device_id`, `user_id`, `thumbnails`, `converted_format`,
-`is_deduplicated`. Indexed on `status` and `content_hash`.
+`is_deduplicated`. Indexed on `status` and `metadata_hash`.
 
 `folder_configs` — `id`, `folder_path`, `folder_name`, `is_enabled`,
 `added_at`, `last_scanned_at`, `include_patterns`, `exclude_patterns`,
@@ -723,7 +726,7 @@ curl -s https://<vercel-project>.vercel.app/api/auth/health
 To verify against a real backend: set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` and
 the S3 variables in `.env`, restart, register a user, confirm the shell appears,
 sign out and sign back in, then upload a file and confirm the object appears at
-`Prefix/temp/uploads/{deviceId}/{contentHash}/{fileName}`. Check that the published record is
+`Prefix/temp/uploads/{deviceId}/{fileId}/{fileName}`. Check that the published record is
 version 2 with `storageTempPath` and `storageProvider: "S3"`. A host that
 accepts version 2 and reads S3 is required for `Completed`; the repository
 backend does not yet do so. No live S3 run is claimed by this guide.

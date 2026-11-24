@@ -11,6 +11,7 @@ import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
 import { mapWithConcurrencyAsync, yieldToEventLoop } from '../utils/cooperative';
+import { computeUploadFileIdForFile } from '../utils/fileIdentity';
 import { localFileExistsAsync, localFileSizeAsync } from '../utils/fileAccess';
 import { profileAsync } from '../utils/profiler';
 import type { FileLifecycleService } from './fileLifecycleService';
@@ -82,20 +83,18 @@ export class UploadManager {
 
   /**
    * Builds the documented logical temporary storage path:
-   * `/temp/uploads/{deviceId}/{contentHash}/{fileName}`. The hash segment makes
-   * the object key stable across re-uploads of the same content.
+   * `/temp/uploads/{deviceId}/{fileId}/{fileName}`. The `fileId` segment is the
+   * row GUID salted with the metadata hash, so it is stable across re-uploads
+   * of the same row without depending on the file content.
    */
-  buildStorageTempPath(file: FileEntity): string {
+  async buildStorageTempPath(file: FileEntity): Promise<string> {
     const deviceId = file.deviceId && file.deviceId.trim().length > 0
       ? file.deviceId.trim()
       : 'unknown-device';
-    const contentHash = file.contentHash?.trim().toLowerCase();
-    const hashSegment = contentHash && /^[0-9a-f]{64}$/.test(contentHash)
-      ? contentHash
-      : file.id.replace(/-/g, '');
+    const fileId = await computeUploadFileIdForFile(file);
     const fileName =
       basename(file.fileName) || basename(file.filePath) || file.id.replace(/-/g, '');
-    return `/temp/uploads/${deviceId}/${hashSegment}/${fileName}`;
+    return `/temp/uploads/${deviceId}/${fileId}/${fileName}`;
   }
 
   async uploadFileAsync(
@@ -118,7 +117,7 @@ export class UploadManager {
     const remotePath =
       storageTempPath && storageTempPath.trim().length > 0
         ? storageTempPath.trim()
-        : this.buildStorageTempPath(file);
+        : await this.buildStorageTempPath(file);
 
     if (this.inProgress.has(file.id)) {
       return {
@@ -183,6 +182,8 @@ export class UploadManager {
       file.errorMessage = null;
       file.lastAttemptAt = new Date().toISOString();
 
+      const uploadFileId = await computeUploadFileIdForFile(file);
+
       const uploadedPath = await profileAsync(
         'upload.storage',
         () =>
@@ -192,7 +193,7 @@ export class UploadManager {
               name: file.fileName,
               mimeType: file.mimeType,
               size: file.fileSize,
-              contentHash: file.contentHash,
+              fileId: uploadFileId,
               signal: options?.signal,
               onProgress: options?.onProgress,
             },
@@ -347,7 +348,7 @@ export class UploadManager {
       const batchResults = await mapWithConcurrencyAsync(
         batch,
         concurrency,
-        (file) => this.uploadFileAsync(file, this.buildStorageTempPath(file), options),
+        async (file) => this.uploadFileAsync(file, await this.buildStorageTempPath(file), options),
         () => {
           completed += 1;
           batchOptions?.onProgress?.(Math.min(completed, total), total);

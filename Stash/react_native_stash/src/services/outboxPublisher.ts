@@ -94,7 +94,7 @@ export class OutboxPublisher {
       };
     }
 
-    const message = createUploadRequestMessage(file, deviceId, userId, appConfig.Storage.Provider);
+    const message = await createUploadRequestMessage(file, deviceId, userId, appConfig.Storage.Provider);
     const payload = JSON.stringify(message);
 
     await this.outbox.enqueueAsync({
@@ -248,20 +248,22 @@ export class OutboxPublisher {
     await forEachChunkedAsync(
       enqueueable,
       async (chunk) => {
-        const params = chunk.map((file) => {
-          const message = createUploadRequestMessage(
-            file,
-            deviceId,
-            userId,
-            appConfig.Storage.Provider,
-          );
-          return {
-            fileId: file.id,
-            correlationId: message.correlationId,
-            messageId: message.messageId,
-            payload: JSON.stringify(message),
-          };
-        });
+        const params = await Promise.all(
+          chunk.map(async (file) => {
+            const message = await createUploadRequestMessage(
+              file,
+              deviceId,
+              userId,
+              appConfig.Storage.Provider,
+            );
+            return {
+              fileId: file.id,
+              correlationId: message.correlationId,
+              messageId: message.messageId,
+              payload: JSON.stringify(message),
+            };
+          }),
+        );
 
         try {
           await this.outbox.enqueueManyAsync(params);
@@ -324,8 +326,7 @@ export class OutboxPublisher {
     await this.lifecycle.markTerminalFailureAsync(row.fileId, 'publish', errorMessage);
 
     try {
-      const fresh = await this.files.getByIdAsync(row.fileId);
-      const key = fresh?.contentHash || requestFileId || row.fileId;
+      const key = requestFileId || row.fileId;
       await this.producer.produceDeadLetterAsync(key, row.payload, errorMessage);
     } catch (error) {
       console.warn(`Dead letter production failed for outbox message ${row.id}: ${messageOf(error)}`);

@@ -1,42 +1,35 @@
 /**
  * FolderIngestionService - turns a folder scan into deduplicated `Pending`
- * rows. Hashes are cached by URI + size + modified time in `file_hash_cache`,
- * so re-scanning an unchanged folder skips the native digest.
+ * rows.
  *
- * Large folders (10k+ files) are the normal case, so this pass is built around
- * batched database work instead of per-file round trips:
- *  - the hash cache and the set of already-tracked content hashes are preloaded
- *    once per folder, then kept in memory;
- *  - files are hashed with a small bounded-concurrency pool (`File.digest` is
- *    async native I/O, so a few digests safely overlap);
+ * Identity is metadata only: the normalised file name plus the byte size
+ * (`computeMetadataHash`). No file content is read during a scan, so a
+ * 10k-file pass never touches the native digest path; the host recomputes a
+ * SHA-256 of the bytes it downloads and deduplicates on that, so byte-identical
+ * files from another folder or another device still collapse there.
+ *
+ * Large folders are the normal case, so this pass is built around batched
+ * database work instead of per-file round trips:
+ *  - the set of already-tracked metadata hashes is preloaded once per folder;
  *  - rows are inserted in transactional batches;
- *  - hash-cache writes are flushed once per chunk;
  *  - the loop yields between chunks so the UI thread keeps painting.
  */
 import type { FileRepository } from '../data/fileRepository';
 import type { FolderRepository } from '../data/folderRepository';
-import {
-  type HashCacheEntry,
-  type HashCacheRepository,
-  type HashCacheWrite,
-} from '../data/hashCacheRepository';
 import { createFileEntity, type FileEntity } from '../models/fileEntity';
 import type { FolderConfig } from '../models/folderConfig';
 import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
-import {
-  forEachChunkedAsync,
-  mapWithConcurrencyAsync,
-  yieldToEventLoop,
-} from '../utils/cooperative';
+import { computeMetadataHash } from '../utils/fileIdentity';
+import { forEachChunkedAsync, yieldToEventLoop } from '../utils/cooperative';
 import { profileAsync } from '../utils/profiler';
 import { mimeTypeForFile, type FolderScannerService } from './folderScannerService';
 
 export interface FolderIngestionResult {
   scanned: number;
   discovered: number;
-  hashed: number;
-  cacheHits: number;
+  /** Scanned files skipped because their name + size is already tracked. */
+  duplicates: number;
 }
 
 export interface FolderIngestionProgress {
@@ -50,24 +43,12 @@ export type FolderIngestionProgressHandler = (progress: FolderIngestionProgress)
 const BATCH_SIZE = 25;
 /** Files handled per scheduling slice; the loop yields between slices. */
 const CHUNK_SIZE = 250;
-/** Files hashed at the same time. `File.digest` is async native work and safe
- * to overlap; higher values risk saturating the device's IO dispatcher. */
-const HASH_CONCURRENCY = 4;
-/** Cached hashes older than this are pruned on each ingestion. */
-const HASH_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-
-function modifiedAtIsoOf(file: { modifiedAtMs?: number | null }): string | null {
-  return typeof file.modifiedAtMs === 'number' && Number.isFinite(file.modifiedAtMs)
-    ? new Date(file.modifiedAtMs).toISOString()
-    : null;
-}
 
 export class FolderIngestionService {
   constructor(
     private readonly scanner: FolderScannerService,
     private readonly fileRepository: FileRepository,
     private readonly folderRepository: FolderRepository,
-    private readonly hashCache: HashCacheRepository,
   ) {}
 
   async ingestFolderAsync(
@@ -93,18 +74,13 @@ export class FolderIngestionService {
     // abort the pass or continue with the next folder.
     const scannedFiles = await this.scanner.scanFolderAsync(folder);
 
-    await this.pruneHashCacheAsync();
-
     let discovered = 0;
-    let hashed = 0;
-    let cacheHits = 0;
+    let duplicates = 0;
     let processed = 0;
     let batch: FileEntity[] = [];
-    let cacheWrites: HashCacheWrite[] = [];
 
     // Preloaded once: a per-file read would be a bridge round trip per file.
-    const cacheByUri = await this.loadHashCacheAsync();
-    const knownHashes = await this.loadKnownContentHashesAsync();
+    const knownMetadata = await this.loadKnownMetadataHashesAsync();
 
     const flushBatchAsync = async (): Promise<void> => {
       if (batch.length === 0) {
@@ -114,114 +90,28 @@ export class FolderIngestionService {
       batch = [];
     };
 
-    const flushCacheWritesAsync = async (): Promise<void> => {
-      if (cacheWrites.length === 0) {
-        return;
-      }
-      const pending = cacheWrites;
-      cacheWrites = [];
-      try {
-        await this.hashCache.putManyAsync(pending);
-      } catch (error) {
-        // The hash cache is an optimization; a failed write only costs a later
-        // re-hash, so it must not fail the ingestion pass.
-        await logError('folderIngestion.cacheWrite', error, {
-          entries: pending.length,
-          folderPath: folder.folderPath,
-        });
-      }
-    };
-
-    /**
-     * Resolves one file's hash from the in-memory cache or the native digest,
-     * updating the cache map and pending cache writes. Returns null when the
-     * file cannot be hashed; the error is logged so the pass can continue.
-     */
-    const hashOrCacheAsync = async (file: {
-      uri: string;
-      size: number;
-      modifiedAtMs?: number | null;
-    }): Promise<string | null> => {
-      const modifiedAtIso = modifiedAtIsoOf(file);
-      const cached = cacheByUri.get(file.uri);
-      if (
-        cached &&
-        cached.size === file.size &&
-        modifiedAtIso !== null &&
-        cached.modifiedAt === modifiedAtIso
-      ) {
-        cacheHits += 1;
-        return cached.contentHash;
-      }
-
-      try {
-        const hash = await this.scanner.computeFileHashAsync(file.uri, file.size);
-        if (!hash) {
-          return null;
-        }
-        hashed += 1;
-
-        if (modifiedAtIso !== null) {
-          const entry: HashCacheEntry = {
-            uri: file.uri,
-            size: file.size,
-            modifiedAt: modifiedAtIso,
-            contentHash: hash,
-            updatedAt: new Date().toISOString(),
-          };
-          cacheByUri.set(file.uri, entry);
-          cacheWrites.push({
-            uri: entry.uri,
-            size: entry.size,
-            modifiedAt: entry.modifiedAt,
-            contentHash: entry.contentHash,
-          });
-        }
-        return hash;
-      } catch (error) {
-        await logError('folderIngestion.hash', error, {
-          uri: file.uri,
-          folderPath: folder.folderPath,
-        });
-        return null;
-      }
-    };
-
     try {
       await forEachChunkedAsync(
         scannedFiles,
         async (chunk) => {
-          // Hash the chunk with bounded concurrency: a serial 2000-file pass
-          // spends its whole lifetime waiting on the native digest (see
-          // `folder.hash` in stash-profile.log).
-          const hashedFiles = await mapWithConcurrencyAsync(
-            chunk,
-            HASH_CONCURRENCY,
-            async (file) => ({ file, hash: await hashOrCacheAsync(file) }),
-          );
-
-          // Sequential post-hash pass so dedup mutations (knownHashes), batch
-          // assembly and flushes keep their previous order-invariant behavior.
-          for (const { file, hash } of hashedFiles) {
+          for (const file of chunk) {
             processed += 1;
-            if (!hash) {
-              continue;
-            }
 
-            const normalizedHash = hash.toLowerCase();
-            if (knownHashes.has(normalizedHash)) {
+            const metadataHash = await computeMetadataHash(file.name, file.size);
+            if (knownMetadata.has(metadataHash)) {
+              duplicates += 1;
               continue;
             }
-            // Mark before the insert so two files with identical content in the
-            // same folder only produce one row.
-            knownHashes.add(normalizedHash);
+            // Mark before the insert so two files with the same name and size
+            // in the same folder only produce one row.
+            knownMetadata.add(metadataHash);
 
             batch.push(
               createFileEntity({
                 fileName: file.name,
                 filePath: file.uri,
                 fileSize: file.size,
-                contentHash: hash,
+                metadataHash,
                 mimeType: mimeTypeForFile(file.name),
                 createdAt: file.createdAt,
                 modifiedAt: file.modifiedAt,
@@ -237,14 +127,12 @@ export class FolderIngestionService {
           }
 
           await flushBatchAsync();
-          await flushCacheWritesAsync();
           onProgress?.({ processed, total: scannedFiles.length });
         },
         { chunkSize: CHUNK_SIZE },
       );
 
       await flushBatchAsync();
-      await flushCacheWritesAsync();
 
       // Preserve the previous one-stamp-per-scan behavior; update errors are
       // surfaced to the caller.
@@ -254,42 +142,21 @@ export class FolderIngestionService {
       return {
         scanned: scannedFiles.length,
         discovered,
-        hashed,
-        cacheHits,
+        duplicates,
       };
     } finally {
-      await this.pruneHashCacheAsync();
       // Let the UI paint the final progress state before the caller continues.
       await yieldToEventLoop();
     }
   }
 
-  private async loadHashCacheAsync(): Promise<Map<string, HashCacheEntry>> {
-    try {
-      const entries = await this.hashCache.getAllAsync();
-      return new Map(entries.map((entry) => [entry.uri, entry]));
-    } catch (error) {
-      await logError('folderIngestion.loadHashCache', error);
-      return new Map();
-    }
-  }
-
   /** Deduplication lookups are preloaded; this keeps the single-file fallback. */
-  private async loadKnownContentHashesAsync(): Promise<Set<string>> {
+  private async loadKnownMetadataHashesAsync(): Promise<Set<string>> {
     try {
-      return await this.fileRepository.getAllContentHashesAsync();
+      return await this.fileRepository.getAllMetadataHashesAsync();
     } catch (error) {
       await logError('folderIngestion.loadKnownHashes', error);
       return new Set();
-    }
-  }
-
-  private async pruneHashCacheAsync(): Promise<void> {
-    try {
-      const cutoff = new Date(Date.now() - HASH_CACHE_RETENTION_MS).toISOString();
-      await this.hashCache.pruneAsync(cutoff);
-    } catch (error) {
-      console.warn('[folderIngestion] Could not prune the hash cache.', error);
     }
   }
 }

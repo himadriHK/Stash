@@ -6,6 +6,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import * as Application from 'expo-application';
 import { useFocusEffect } from '@react-navigation/native';
+import { ActionDialog } from '../components/ActionDialog';
 import { AppButton } from '../components/AppButton';
 import { NoteText, ScreenTitle } from '../components/FormText';
 import { useToast } from '../components/ToastContext';
@@ -38,6 +39,7 @@ import {
   requestStorageAccessAsync,
   type StorageAccess,
 } from '../utils/storagePermissions';
+import { resetDatabaseAsync } from '../data/database';
 import type { FileSummary } from '../data/fileRepository';
 import {
   backgroundUploadService,
@@ -287,10 +289,6 @@ const DiagnosticsSection = React.memo(function DiagnosticsSection({
       />
       <SettingsRow label="Outbox" value={diagnostics ? outboxSummary(diagnostics) : '—'} />
       <SettingsRow
-        label="Hash cache entries"
-        value={diagnostics ? String(diagnostics.hashCacheEntries) : '—'}
-      />
-      <SettingsRow
         label="Processed responses"
         value={diagnostics ? String(diagnostics.processedMessages) : '—'}
       />
@@ -412,6 +410,33 @@ const StorageSection = React.memo(function StorageSection({
           </Text>
         </ScrollView>
       ) : null}
+    </>
+  );
+});
+
+interface LocalDataSectionProps {
+  onResetDatabase: () => void;
+}
+
+/** Destructive local-only actions. Nothing here touches the device's media. */
+const LocalDataSection = React.memo(function LocalDataSection({
+  onResetDatabase,
+}: LocalDataSectionProps) {
+  return (
+    <>
+      <SectionTitle>Local data</SectionTitle>
+      <NoteText style={styles.permissionNote}>
+        Resetting deletes stash.db on this device: tracked files, folders, upload history and
+        queued messages. Photos and videos on the device and the host library are not touched.
+      </NoteText>
+      <View style={styles.diagnosticsButtons}>
+        <AppButton
+          title="Reset database"
+          variant="link"
+          onPress={onResetDatabase}
+          testID="ResetDatabaseButton"
+        />
+      </View>
     </>
   );
 });
@@ -575,7 +600,7 @@ const ConfigurationSection = React.memo(function ConfigurationSection({
         }
       />
       <SettingsRow
-        label="Files per background run"
+        label="Files per sync batch"
         value={
           appConfig.BackgroundUpload.MaxFilesPerRun <= 0
             ? 'Unlimited'
@@ -640,6 +665,8 @@ export function SettingsScreen() {
       setStorageAccess(null);
     }
   }, []);
+
+  const [confirmResetDatabase, setConfirmResetDatabase] = useState(false);
 
   const refreshDiagnostics = useCallback(async () => {
     setDiagnosticsLoading(true);
@@ -780,6 +807,18 @@ export function SettingsScreen() {
     toast.show('Error log cleared.');
   }, [toast]);
 
+  const onResetDatabase = useCallback(async () => {
+    try {
+      await resetDatabaseAsync();
+      setErrorLog(null);
+      await refreshSummary();
+      await refreshDiagnostics();
+      toast.show('Local database reset. Restart the app to reload every screen.');
+    } catch (error) {
+      toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
+    }
+  }, [toast, colors.error, refreshSummary, refreshDiagnostics]);
+
   const onLogout = useCallback(async () => {
     try {
       await logout();
@@ -831,12 +870,29 @@ export function SettingsScreen() {
           onClearErrorLog={onClearErrorLog}
         />
 
+        <LocalDataSection onResetDatabase={() => setConfirmResetDatabase(true)} />
+
         <AboutSection appVersion={appVersion} buildVersion={buildVersion} />
 
         <NoteText style={styles.footerNote}>
           Configuration comes from src/config/appconfig.json, with secrets supplied via EXPO_PUBLIC_* environment variables (.env).
         </NoteText>
       </ScrollView>
+
+      <ActionDialog
+        visible={confirmResetDatabase}
+        title="Reset the local database?"
+        message="Every tracked file, folder, upload record and queued message in stash.db is deleted. The media on your device and the host library stay as they are. This cannot be undone."
+        buttons={[
+          {
+            label: 'Reset database',
+            style: 'destructive' as const,
+            onPress: () => void onResetDatabase(),
+          },
+          { label: 'Cancel', style: 'cancel' as const },
+        ]}
+        onClose={() => setConfirmResetDatabase(false)}
+      />
     </View>
   );
 }

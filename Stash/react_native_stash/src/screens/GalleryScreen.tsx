@@ -590,7 +590,7 @@ export function GalleryScreen() {
                 `Size: ${formatFileSize(detailsFile.fileSize)}`,
                 `Status: ${detailsFile.status}`,
                 `MIME type: ${detailsFile.mimeType}`,
-                `Content hash: ${detailsFile.contentHash}`,
+                `File identity: ${detailsFile.metadataHash}`,
                 `Discovered: ${formatDate(detailsFile.discoveredAt)}`,
                 ...(detailsFile.errorMessage ? [`Error: ${detailsFile.errorMessage}`] : []),
               ].join('\n')

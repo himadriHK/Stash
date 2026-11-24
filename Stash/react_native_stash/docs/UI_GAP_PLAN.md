@@ -116,7 +116,7 @@ truth; the new Backup Status section shows provider/bucket readiness instead.
    - `notificationsSeenAt` (ISO timestamp, default epoch)
    Exposes `getUiPreferencesAsync`, `setAutoUploadAsync`, `setBackupVideosAsync`,
    `markNotificationsSeenAsync`.
-2. **`src/services/favoritesStore.ts`** — local favorite set keyed by `contentHash`
+2. **`src/services/favoritesStore.ts`** — local favorite set keyed by the row id
    (JSON array in `utils/storage`), with an in-memory cache and `toggleFavoriteAsync`.
    Favorites are a client-side view; SQLite schema is unchanged.
 3. **`src/services/notificationFeed.ts`** — derives notification items from recent file

@@ -381,14 +381,17 @@ export class FileLifecycleService {
     response: UploadResponseMessage,
     maxHostRetries: number,
   ): Promise<ApplyResponseOutcome> {
-    const contentHash = typeof response.fileId === 'string'
-      ? response.fileId.trim().toLowerCase()
-      : '';
-    if (!contentHash) {
+    const responseFileId = typeof response.fileId === 'string' ? response.fileId.trim() : '';
+    const responseCorrelationId = (response.correlationId ?? '').trim();
+    if (!responseFileId || !responseCorrelationId) {
       return 'ignored';
     }
 
-    const file = await this.files.getByContentHashAsync(contentHash);
+    // The host echoes the client file id and the request correlation id. The
+    // outbox stamped the correlation id on the row when it published, so that is
+    // the lookup key (the file id is a GUID salted with the metadata hash and is
+    // not stored in its own column).
+    const file = await this.files.getByRequestCorrelationIdAsync(responseCorrelationId);
     if (!file) {
       return 'ignored';
     }
@@ -413,7 +416,6 @@ export class FileLifecycleService {
       return 'duplicate';
     }
 
-    const responseCorrelationId = (response.correlationId ?? '').trim();
     const fileCorrelationId = (file.requestCorrelationId ?? '').trim();
     if (
       responseCorrelationId.length > 0 &&

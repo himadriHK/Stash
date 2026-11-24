@@ -112,7 +112,7 @@ Assumptions: exactly one writer per DB/library; the process is non-root with rea
 | `version` | Integer, exactly `2`; anything else rejects. |
 | `messageId` | Non-empty string, <=128 chars. |
 | `timestamp` | Optional ISO-8601; diagnostics only. |
-| `fileId` | 64 hex chars, normalized lowercase; becomes canonical after verify. |
+| `fileId` | Client identifier: 64 hex chars (a GUID the device salted with its name + size metadata hash), normalized lowercase. Echoed in the response and used as the Kafka key; it is not a content hash. |
 | `fileName` | 1-255 chars, no `/`, `\`, control chars, not `.`/`..`; extension/MIME hint only. |
 | `fileSize` | Integer `>0` and `<=524288000`; must match streamed bytes and S3 `ContentLength` when present. |
 | `mimeType` | `^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$`, no whitespace, lowercased. |
@@ -133,7 +133,7 @@ JWT: `Authorization` case-insensitive, `Bearer <token>` or bare token for legacy
 | --- | --- |
 | `messageId` | New UUID per response; outbox uniqueness is `(job_id, kind)`. |
 | `timestamp` | ISO-8601 UTC. |
-| `fileId` | Canonical lowercase SHA-256. |
+| `fileId` | The client `jobs.file_id`, echoed so the device can match the row. |
 | `status` | Exactly `COMPLETED` or `FAILED` (cancel is FAILED with "Cancelled"). |
 | `permanentPath` | Logical `/backups/{userId}/{hash}.jpg|.mp4`; `null` on FAILED. |
 | `thumbnails` | Object keys `"128"|"256"|"512"` -> logical `/thumbs/{userId}/{size}/{hash}.jpg`; empty on FAILED. |
@@ -164,7 +164,7 @@ Writer rules: resolve then require the path to start with `path.resolve(LOCAL_RO
 
 SQLite at `DB_PATH`: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`, `busy_timeout=5000`, `temp_store=MEMORY`. Ordered migrations run in a transaction and are tracked by `PRAGMA user_version` (v1 in phase 1).
 
-`jobs`: `id` PK; `correlation_id` UNIQUE; `message_id`; `file_id`; `request_file_id`; `file_name`; `file_size`; `downloaded_size`; `mime_type`; `storage_provider`; `storage_temp_path`; `storage_key`; `user_id`; `device_id`; `metadata_json`; `status` (`queued|running|completed|failed|cancelled`); `stage` (`queued|download|verify|deduplicate|convert|thumbnails|store|respond|delete_temp|done`); `failed_stage`; `progress` 0-100; `attempts`; `max_attempts`; `stage_attempts_json`; `next_attempt_at`; `lease_owner`; `lease_expires_at`; `heartbeat_at`; `cancel_requested`; `deduplicated`; `permanent_path`; `thumbnails_json`; `converted_format`; `temp_dir`; `error_code`; `error_message`; `processing_time_ms`; `created_at`; `started_at`; `finished_at`; `updated_at`.
+`jobs`: `id` PK; `correlation_id` UNIQUE; `message_id`; `file_id`; `request_file_id`; `content_hash` (SHA-256 computed by the verify stage, names the permanent object and thumbnails); `file_name`; `file_size`; `downloaded_size`; `mime_type`; `storage_provider`; `storage_temp_path`; `storage_key`; `user_id`; `device_id`; `metadata_json`; `status` (`queued|running|completed|failed|cancelled`); `stage` (`queued|download|verify|deduplicate|convert|thumbnails|store|respond|delete_temp|done`); `failed_stage`; `progress` 0-100; `attempts`; `max_attempts`; `stage_attempts_json`; `next_attempt_at`; `lease_owner`; `lease_expires_at`; `heartbeat_at`; `cancel_requested`; `deduplicated`; `permanent_path`; `thumbnails_json`; `converted_format`; `temp_dir`; `error_code`; `error_message`; `processing_time_ms`; `created_at`; `started_at`; `finished_at`; `updated_at`.
 
 Indexes: `(status, next_attempt_at)`, `(status, stage)`, `(lease_expires_at)`, `(file_id, user_id)`, `(created_at DESC)`, `(finished_at DESC)`, `(user_id, created_at DESC)`, `(device_id, created_at DESC)`.
 

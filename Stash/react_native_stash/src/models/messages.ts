@@ -4,6 +4,7 @@
  * app; JSON.stringify here produces the same shape).
  */
 import type { FileEntity } from './fileEntity';
+import { computeUploadFileIdForFile } from '../utils/fileIdentity';
 import { uuid } from '../utils/id';
 
 export interface FileMetadata {
@@ -14,7 +15,11 @@ export interface FileMetadata {
 export interface UploadRequestMessage {
   messageId: string;
   timestamp: string;
-  /** SHA-256 content hash - also used as the Kafka record key. */
+  /**
+   * Client file identifier (the row GUID salted with the metadata hash) - also
+   * used as the Kafka record key. It is not a content hash: the host computes
+   * the content hash itself and deduplicates on that.
+   */
   fileId: string;
   fileName: string;
   fileSize: number;
@@ -46,16 +51,16 @@ export interface UploadResponseMessage {
   version: number;
 }
 
-export function createUploadRequestMessage(
+export async function createUploadRequestMessage(
   file: FileEntity,
   deviceId: string,
   userId: string,
   storageProvider: string,
-): UploadRequestMessage {
+): Promise<UploadRequestMessage> {
   return {
     messageId: uuid(),
     timestamp: new Date().toISOString(),
-    fileId: file.contentHash,
+    fileId: await computeUploadFileIdForFile(file),
     fileName: file.fileName,
     fileSize: file.fileSize,
     mimeType: file.mimeType,

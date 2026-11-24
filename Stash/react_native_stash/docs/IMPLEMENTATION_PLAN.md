@@ -301,8 +301,9 @@ to the whole library.
 
 **Tasks**
 
-- [x] Add a hash cache keyed by URI + size + lastModified (`file_hash_cache`) so
-      unchanged files are not re-hashed. Implemented in
+- [x] ~~Add a hash cache keyed by URI + size + lastModified (`file_hash_cache`)~~
+      Later retired: identity is now metadata only (name + size), so nothing is
+      hashed on the device and the cache table is dropped by schema v4. Was in
       `src/data/hashCacheRepository.ts` and
       `src/services/folderIngestionService.ts`.
 - [x] Make scans incremental: compare against cached metadata and skip unchanged
