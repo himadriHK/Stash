@@ -474,7 +474,6 @@ function renderKpis(jobs) {
   const running = numberOr(data.running, byStatus.running);
   const uniqueFiles = numberOr(data.uniqueFiles);
   const deduplicated = numberOr(data.deduplicated);
-  const declared = numberOr(bytes.declared);
   const downloaded = numberOr(bytes.downloaded);
   const failureRate = numberOr(data.failureRate);
 
@@ -490,7 +489,7 @@ function renderKpis(jobs) {
     fmtNumber(queued + running),
     `+${fmtNumber(queued)} queued · +${fmtNumber(running)} running`,
   );
-  setKpi('kpi-bytes', fmtBytes(downloaded), `of ${fmtBytes(declared)} declared`);
+  setKpi('kpi-bytes', fmtBytes(downloaded), 'Downloaded from staging');
   setKpi('kpi-files', fmtNumber(uniqueFiles), `${fmtNumber(deduplicated)} deduplicated`);
 }
 
@@ -815,8 +814,8 @@ function renderRecentJobs(recentJobs) {
 
     const size = document.createElement('span');
     size.className = 'job-size';
-    size.textContent = fmtBytes(item.fileSize);
-    size.title = `Downloaded ${fmtBytes(item.downloadedSize)} of ${fmtBytes(item.fileSize)}`;
+    size.textContent = fmtBytes(item.downloadedSize);
+    size.title = `Downloaded ${fmtBytes(item.downloadedSize)} from staging`;
     appendTextCell(row, isTable, 'job-cell--size cell-num', size);
 
     const updated = document.createElement('div');

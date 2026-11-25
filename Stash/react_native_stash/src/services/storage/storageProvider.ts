@@ -9,7 +9,6 @@ export interface StorageUploadSource {
   uri: string;
   name: string;
   mimeType?: string;
-  size?: number;
   /** Client file identifier (GUID salted with the metadata hash); object key segment. */
   fileId?: string;
   /** Cancels an in-flight transfer when aborted. */

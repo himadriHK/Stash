@@ -61,7 +61,7 @@ mockups; colour/typography follow the app.
 
 **Settings (mockup 9.3)**
 
-- Backup Status: Total files, Total size, Pending upload, Last sync stat cards; storage
+- Backup Status: Total files, Pending upload, Last sync stat cards; storage
   provider status row; **Sync now** action.
 - Preferences: Auto-upload and Backup videos toggles.
 - About: app version and build line.
@@ -123,7 +123,7 @@ truth; the new Backup Status section shows provider/bucket readiness instead.
    rows (`fileRepository.getRecentActivityAsync`) with a stable status→kind mapping.
    No new tables, no synthetic mock data.
 4. **`src/data/fileRepository.ts`** — two additive read queries:
-   - `getSummaryAsync()` → total files, total bytes, pending count, latest activity.
+   - `getSummaryAsync()` → total files, pending count, latest activity.
    - `getRecentActivityAsync(limit)` → newest rows for the notification feed.
 5. **`src/services/backgroundUploadScheduler.ts`** — add `setEnabled(boolean)` so the
    Auto-upload preference can start/stop the pass immediately.
@@ -175,7 +175,7 @@ truth; the new Backup Status section shows provider/bucket readiness instead.
 `src/screens/SettingsScreen.tsx`.
 
 - **Backup Status** (after Account): four stat cards from `getSummaryAsync` — total files,
-  total size, pending uploads, last sync — plus S3 readiness row and **Sync now**.
+  pending uploads, last sync — plus S3 readiness row and **Sync now**.
 - **Preferences**: Auto-upload switch (persists + scheduler `setEnabled`), Backup videos
   switch (persists; background pass honours it). A caption states that Wi-Fi-only and
   thumbnail-quality options from the mockup are not part of this build (no network module

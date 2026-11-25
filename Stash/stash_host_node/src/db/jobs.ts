@@ -13,7 +13,6 @@ export interface JobRow {
   /** SHA-256 of the downloaded bytes, computed by the verify stage. */
   content_hash: string | null;
   file_name: string | null;
-  file_size: number | null;
   downloaded_size: number | null;
   mime_type: string | null;
   storage_provider: string | null;
@@ -55,7 +54,6 @@ export interface InsertJobInput {
   fileId: string;
   requestFileId: string;
   fileName: string;
-  fileSize: number;
   mimeType: string;
   storageProvider: string;
   storageTempPath: string;
@@ -137,7 +135,6 @@ const JOB_PATCH_FIELDS = [
   'request_file_id',
   'content_hash',
   'file_name',
-  'file_size',
   'downloaded_size',
   'mime_type',
   'storage_provider',
@@ -188,10 +185,10 @@ export class JobRepository {
     this.db
       .prepare(
         `INSERT INTO jobs (
-           id, correlation_id, message_id, file_id, request_file_id, file_name, file_size,
+           id, correlation_id, message_id, file_id, request_file_id, file_name,
            mime_type, storage_provider, storage_temp_path, storage_key, user_id, device_id,
            metadata_json, max_attempts, temp_dir, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -200,7 +197,6 @@ export class JobRepository {
         input.fileId,
         input.requestFileId,
         input.fileName,
-        input.fileSize,
         input.mimeType,
         input.storageProvider,
         input.storageTempPath,
@@ -221,10 +217,10 @@ export class JobRepository {
     const result = this.db
       .prepare(
         `INSERT OR IGNORE INTO jobs (
-           id, correlation_id, message_id, file_id, request_file_id, file_name, file_size,
+           id, correlation_id, message_id, file_id, request_file_id, file_name,
            mime_type, storage_provider, storage_temp_path, storage_key, user_id, device_id,
            metadata_json, max_attempts, temp_dir, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -233,7 +229,6 @@ export class JobRepository {
         input.fileId,
         input.requestFileId,
         input.fileName,
-        input.fileSize,
         input.mimeType,
         input.storageProvider,
         input.storageTempPath,

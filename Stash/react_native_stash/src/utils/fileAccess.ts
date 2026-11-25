@@ -169,34 +169,3 @@ export async function localFileExistsAsync(uri: string): Promise<boolean> {
   }
 }
 
-/** Size of the file in bytes, or `fallback` when it cannot be determined. */
-export async function localFileSizeAsync(uri: string, fallback = 0): Promise<number> {
-  if (Platform.OS === 'web') {
-    try {
-      return (await webBlobAsync(uri)).size;
-    } catch {
-      return fallback;
-    }
-  }
-
-  try {
-    const file = new File(uri);
-    return file.info().size ?? 0;
-  } catch (newApiError) {
-    // Fallback to legacy API for compatibility.
-    try {
-      const legacyModule = await import('expo-file-system/legacy');
-      const info = await legacyModule.getInfoAsync(uri);
-      if (info.exists && 'size' in info) {
-        return info.size;
-      }
-    } catch (legacyError) {
-      await logError('fileAccess.localFileSize', legacyError, {
-        uri,
-        scheme: uriScheme(uri),
-        newApiError: newApiError instanceof Error ? newApiError.message : String(newApiError),
-      });
-    }
-  }
-  return fallback;
-}

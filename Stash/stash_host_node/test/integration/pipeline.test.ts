@@ -104,7 +104,6 @@ function createJob(buffer: Buffer, options: CreateJobOptions = {}) {
     fileId,
     requestFileId: fileId,
     fileName,
-    fileSize: buffer.length,
     mimeType,
     storageProvider: 'S3',
     storageTempPath: `/temp/uploads/user-1/${fileId}/${fileName}`,

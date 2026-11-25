@@ -4,7 +4,7 @@ A complete guide to installing, configuring and operating the React Native
 (Expo) recreation of **Stash.Maui**. The app keeps the MAUI look — exact
 palette, OpenSans typography, form/button styling, light + dark appearance —
 and reimplements the documented feature set: Identity API authentication,
-SQLite storage with name + size deduplication, folder scanning, direct S3 upload
+SQLite storage with name deduplication, folder scanning, direct S3 upload
 through presigned AWS Signature V4 URLs, Kafka messaging through the Stash proxy and the
 15-minute background upload pass.
 
@@ -132,10 +132,8 @@ Set `EXPO_PUBLIC_IDENTITY_API_BASE_URL` to `https://<vercel-project>.vercel.app`
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `UploadSettings.BatchSize` | `10` | Maximum files per upload batch (also bounded by `MaxConcurrentBytes`). |
+| `UploadSettings.BatchSize` | `10` | Maximum files per upload batch. |
 | `UploadSettings.MaxRetries` | `3` | Retry attempts before a file is marked `Failed` and dead-lettered. |
-| `UploadSettings.MaxFileSizeBytes` | `524288000` | 500 MB per-file limit. Larger files are flagged instead of uploaded. |
-| `UploadSettings.MaxConcurrentBytes` | `268435456` | 256 MB declared-bytes budget per upload batch (`0` or less = unlimited). A single larger file runs alone. |
 
 ### 4.3 Background upload pass
 
@@ -376,10 +374,10 @@ The signed-in shell has five tabs plus a header with the app title and a
 
 1. Tap **Pick Files** → choose one or more images/videos
    (`expo-document-picker`, `image/*` + `video/*`, multi-select).
-2. Picked files are listed with sizes; a file above the 500 MB limit is flagged,
-   and the ✕ on a row removes it from the selection.
+2. Picked files are listed by name; the ✕ on a row removes it from the
+   selection. No size is requested or checked.
 3. Tap **Upload Files**. The app computes each file's metadata identity
-   (`computeMetadataHash(name, size)` - no file bytes are read), skips
+   (`computeMetadataHash(name)` - no file bytes or sizes are read), skips
    duplicates already present by that identity, inserts new rows as `Pending`,
    uploads to S3 in batches through presigned PUT URLs, and publishes Kafka
    upload requests for the uploaded files.
@@ -466,17 +464,15 @@ For each file the app records a row in `files` and moves it through:
 
 Steps performed by the upload manager:
 
-1. **Identity** — `computeMetadataHash(fileName, fileSize)`: SHA-256 over the
-   normalised name and the byte size. No file content is read, so there is no
-   digest of the bytes on the device.
+1. **Identity** — `computeMetadataHash(fileName)`: SHA-256 over the normalised
+   name. Neither the content nor the size is read, so there is no digest of the
+   bytes on the device.
 2. **Dedup** — the tracked identity set is preloaded (`getAllMetadataHashesAsync`)
-   and `metadata_hash` is `UNIQUE`, so a file with the same name and size is not
-   inserted twice. The host deduplicates the uploaded bytes by content hash, so
+   and `metadata_hash` is `UNIQUE`, so a file with the same name is not inserted
+   twice. The host deduplicates the uploaded bytes by content hash, so
    identical files from other devices still collapse there.
-3. **Batch** — files are grouped into byte-aware batches: at most
-   `UploadSettings.BatchSize` transfers and at most
-   `UploadSettings.MaxConcurrentBytes` declared bytes per batch. A single file
-   larger than the byte budget runs alone.
+3. **Batch** — files are grouped into batches of at most
+   `UploadSettings.BatchSize` transfers, each run through a bounded worker pool.
 4. **S3 upload** — `src/services/storage/s3StorageService.ts` derives the bucket
    key from the logical path (`Storage.S3.Prefix` + the path without its leading
    slash), presigns a `PUT` with
@@ -516,7 +512,6 @@ Upload request payload (`camelCase` JSON, version 2):
   "timestamp": "2026-01-01T00:00:00.000Z",
   "fileId": "<sha256 content hash, also the record key>",
   "fileName": "IMG_0001.jpg",
-  "fileSize": 1234567,
   "mimeType": "image/jpeg",
   "storageTempPath": "/temp/uploads/<deviceId>/<contentHash>/IMG_0001.jpg",
   "storageProvider": "S3",
@@ -564,7 +559,7 @@ documented polling fallback is used:
 Database file: `stash.db` (WAL mode).
 
 `files` — one row per discovered/selected file:
-`id`, `file_name`, `file_path`, `file_size`, `metadata_hash` (UNIQUE),
+`id`, `file_name`, `file_path`, `metadata_hash` (UNIQUE),
 `mime_type`, `created_at`, `modified_at`, `discovered_at`, `status`,
 `storage_temp_path`, `permanent_path`, `error_message`, `retry_count`,
 `last_attempt_at`, `device_id`, `user_id`, `thumbnails`, `converted_format`,
@@ -674,8 +669,8 @@ around.
   is 3600 seconds (clamped to 1–604800). A URL that leaks before it expires can
   be used until expiry; keep lifetimes short.
 - **Single PUT only.** S3 limits one presigned PUT to 5 GB. Multipart/resumable
-  upload and bucket lifecycle configuration are deferred; the app's 500 MB cap
-  keeps single-PUT uploads comfortably below that.
+  upload and bucket lifecycle configuration are deferred; the app no longer
+  enforces a client-side file-size cap.
 - **Native streams, web buffers.** Native uploads use SDK 58
   `File.createUploadTask` and downloads use `downloadAsync`, so whole files are
   not held in JS.

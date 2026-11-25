@@ -184,7 +184,6 @@ const DEFAULTS = {
   },
   expo: {
     port: 8081,
-    uploadMaxConcurrentBytes: 268435456,
     uploadMaxHostRetries: 3,
   },
   app: {
@@ -194,7 +193,6 @@ const DEFAULTS = {
     proxyRequestTimeoutSeconds: 45,
     batchSize: 10,
     maxRetries: 3,
-    maxFileSizeBytes: 524288000,
     backgroundUploadEnabled: true,
     backgroundUploadIntervalMinutes: 15,
     backgroundUploadMaxFilesPerRun: 50,
@@ -989,11 +987,6 @@ async function collectConfig(rl, envs) {
 
   const expo = {
     port: expoPort,
-    uploadMaxConcurrentBytes: readNumber(
-      envs,
-      [['expo', 'EXPO_PUBLIC_UPLOAD_MAX_CONCURRENT_BYTES'], ['app', 'UploadSettings.MaxConcurrentBytes']],
-      DEFAULTS.expo.uploadMaxConcurrentBytes,
-    ),
     uploadMaxHostRetries: readNumber(
       envs,
       [['expo', 'EXPO_PUBLIC_UPLOAD_MAX_HOST_RETRIES'], ['app', 'UploadSettings.MaxHostRetries']],
@@ -1025,11 +1018,6 @@ async function collectConfig(rl, envs) {
     ),
     batchSize: readNumber(envs, [['app', 'UploadSettings.BatchSize']], DEFAULTS.app.batchSize),
     maxRetries: readNumber(envs, [['app', 'UploadSettings.MaxRetries']], DEFAULTS.app.maxRetries),
-    maxFileSizeBytes: readNumber(
-      envs,
-      [['app', 'UploadSettings.MaxFileSizeBytes']],
-      DEFAULTS.app.maxFileSizeBytes,
-    ),
     backgroundUploadEnabled: readBool(
       envs,
       [['app', 'BackgroundUpload.Enabled']],
@@ -1431,7 +1419,6 @@ function buildUpdates(config) {
     EXPO_PUBLIC_S3_PREFIX: s3.prefix,
     EXPO_PUBLIC_S3_FORCE_PATH_STYLE: String(s3.forcePathStyle),
     EXPO_PUBLIC_S3_PRESIGN_EXPIRY_SECONDS: String(s3.presignExpirySeconds),
-    EXPO_PUBLIC_UPLOAD_MAX_CONCURRENT_BYTES: String(config.expo.uploadMaxConcurrentBytes),
     EXPO_PUBLIC_UPLOAD_MAX_HOST_RETRIES: String(config.expo.uploadMaxHostRetries),
   };
 
@@ -1713,8 +1700,6 @@ function appConfigUpdates(config) {
     'UploadSettings.BatchSize': app.batchSize,
     'UploadSettings.MaxRetries': app.maxRetries,
     'UploadSettings.MaxHostRetries': expo.uploadMaxHostRetries,
-    'UploadSettings.MaxFileSizeBytes': app.maxFileSizeBytes,
-    'UploadSettings.MaxConcurrentBytes': expo.uploadMaxConcurrentBytes,
     'BackgroundUpload.Enabled': app.backgroundUploadEnabled,
     'BackgroundUpload.IntervalMinutes': app.backgroundUploadIntervalMinutes,
     'BackgroundUpload.MaxFilesPerRun': app.backgroundUploadMaxFilesPerRun,

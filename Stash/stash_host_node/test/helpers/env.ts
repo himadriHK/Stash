@@ -70,7 +70,6 @@ export function validRequest(overrides: RequestOverrides = {}): Record<string, u
     timestamp: '2026-11-21T00:00:00.000Z',
     fileId: 'a'.repeat(64),
     fileName: 'photo.heic',
-    fileSize: 1024,
     mimeType: 'image/heic',
     storageTempPath: `/temp/uploads/device-1/${'a'.repeat(64)}/photo.heic`,
     storageProvider: 'S3',

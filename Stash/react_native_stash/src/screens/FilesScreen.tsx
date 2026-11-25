@@ -25,7 +25,7 @@ import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus, uploadStatusDisplayName } from '../models/uploadStatus';
 import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes } from '../theme/typography';
-import { formatFileSize, formatDate } from '../utils/format';
+import { formatDate } from '../utils/format';
 
 type Props = NativeStackNavigationProp<RootStackParamList>;
 
@@ -256,7 +256,6 @@ export function FilesScreen() {
           detailsFile
             ? [
                 `Path: ${detailsFile.filePath}`,
-                `Size: ${formatFileSize(detailsFile.fileSize)}`,
                 `Status: ${uploadStatusDisplayName(detailsFile.status)}`,
                 `MIME type: ${detailsFile.mimeType}`,
                 `File identity: ${detailsFile.metadataHash}`,

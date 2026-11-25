@@ -9,7 +9,6 @@ import {
 } from '../models/uploadStatus';
 import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes } from '../theme/typography';
-import { formatFileSize } from '../utils/format';
 
 interface FileCardProps {
   file: FileEntity;
@@ -23,8 +22,8 @@ function withAlpha(hexColor: string, alphaHex: string): string {
 
 /**
  * File row documented for the Files screen: status icon chip (colour per
- * status), name, size, coloured status line, error line in #B00020, and an
- * overflow action.
+ * status), name, coloured status line, error line in #B00020, and an overflow
+ * action.
  */
 export function FileCard({ file, onPress, onMorePress }: FileCardProps) {
   const { colors } = useTheme();
@@ -50,9 +49,6 @@ export function FileCard({ file, onPress, onMorePress }: FileCardProps) {
       <View style={styles.body}>
         <Text numberOfLines={1} style={[styles.name, { color: colors.text }]}>
           {file.fileName}
-        </Text>
-        <Text style={[styles.meta, { color: colors.textMuted }]}>
-          Size: {formatFileSize(file.fileSize)}
         </Text>
         <Text style={[styles.meta, { color: statusColor }]}>
           Status: {uploadStatusDisplayName(file.status)}

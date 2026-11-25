@@ -2,10 +2,10 @@
  * Metadata-only file identity.
  *
  * The device never reads file contents to identify a file: identity is the
- * normalised file name plus the byte size, which keeps a 10k-file scan cheap.
- * The host recomputes a SHA-256 of the downloaded bytes and deduplicates on
- * that, so byte-identical files from different folders or different devices
- * still collapse there.
+ * normalised file name, which keeps a 10k-file scan cheap and lets the scanner
+ * skip per-entry size lookups entirely. The host recomputes a SHA-256 of the
+ * downloaded bytes and deduplicates on that, so byte-identical files from
+ * different folders or different devices still collapse there.
  *
  * - `metadataHash` is the local dedup key (`files.metadata_hash`, UNIQUE).
  * - `uploadFileId` is a per-row GUID salted with the metadata hash. It is what
@@ -16,7 +16,7 @@
  * and native-backed, so every hashing entry point below is async. Because
  * SHA-256 of a UTF-8 string is identical across implementations, the digests
  * are byte-for-byte identical to the previous pure-JS path, so cross-device
- * identity (shared name + size, and the derived upload file id) is preserved.
+ * identity (a shared file name, and the derived upload file id) is preserved.
  */
 import * as Crypto from 'expo-crypto';
 import { uuid } from './id';
@@ -32,15 +32,11 @@ function sha256Hex(input: string): Promise<string> {
 }
 
 /**
- * Local dedup identity: SHA-256 over the normalised name and the byte size.
- * Pure metadata - no file bytes are read.
+ * Local dedup identity: SHA-256 over the normalised name. Pure metadata - no
+ * file bytes are read and no size stat is needed.
  */
-export async function computeMetadataHash(
-  fileName: string,
-  fileSize: number,
-): Promise<string> {
-  const size = Number.isFinite(fileSize) ? Math.max(0, Math.trunc(fileSize)) : 0;
-  return sha256Hex(`${normalizeIdentityName(fileName)}\u0000${size}`);
+export async function computeMetadataHash(fileName: string): Promise<string> {
+  return sha256Hex(normalizeIdentityName(fileName));
 }
 
 /**

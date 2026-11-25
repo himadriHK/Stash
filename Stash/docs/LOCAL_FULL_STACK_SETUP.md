@@ -704,7 +704,7 @@ for this runbook); secrets are normally supplied via `.env`:
   },
   "IdentityApiBaseUrl": "http://localhost:5102",
   "IdentityApiTimeoutSeconds": 30,
-  "UploadSettings": { "BatchSize": 10, "MaxRetries": 3, "MaxFileSizeBytes": 524288000 },
+  "UploadSettings": { "BatchSize": 10, "MaxRetries": 3 },
   "BackgroundUpload": { "Enabled": true, "IntervalMinutes": 15, "MaxFilesPerRun": 50 }
 }
 ```
@@ -846,8 +846,8 @@ overrides it (`stash-upload-request`, `stash-dlq-handler`).
 ### 13.3 RN app — `appconfig.json` + `.env`
 
 See §11. `Storage.Provider` is `S3`; `Storage.S3.*` supplies the bucket, region, credentials,
-endpoint/path-style, prefix and presign expiry. `UploadSettings.MaxFileSizeBytes` (500 MB),
-`BatchSize` (10) bounds each upload batch and `BackgroundUpload.MaxFilesPerRun` (50)
+endpoint/path-style, prefix and presign expiry. `BatchSize` (10) bounds each upload
+batch and `BackgroundUpload.MaxFilesPerRun` (50)
 bounds each candidate page, which a single pass repeats until the backlog is drained.
 
 ---
@@ -1184,7 +1184,7 @@ Notes:
 - `megajs` creates root-level files; `path` segments are only encoded into the name (same as the
   backend). That is intentional: the backend can only find root-level files.
 - For very large files the upload is streamed from a temp file on disk (`multer` disk storage), so RAM
-  usage stays flat, but the 500 MB `UploadSettings.MaxFileSizeBytes` cap still applies client-side.
+  usage stays flat; the current client no longer declares or enforces a file-size cap.
 
 ## Appendix B — Message contracts
 
@@ -1197,7 +1197,6 @@ Notes:
   "timestamp": "2026-11-03T09:12:44.118Z",
   "fileId": "<64 hex sha256>",
   "fileName": "IMG_0001.HEIC",
-  "fileSize": 4821004,
   "mimeType": "image/heic",
   "storageTempPath": "/temp/uploads/<deviceId>/IMG_0001.HEIC",
   "storageProvider": "S3",
@@ -1234,7 +1233,7 @@ The repository host's current validator rejects this message because it expects 
 **Repository host (version 1/MEGA) validation rules** that cause a DLQ trip
 (`UploadRequestValidator` + `KafkaTriggerFunction`): version ≠ 1, `fileId` not 64-hex, key ≠
 `fileId`, missing/invalid JWT header, JWT `userId`/`deviceId` not matching the payload, missing
-correlation id, file name containing separators, `fileSize` ≤ 0 or > 500 MB, `megaTempPath` not
+correlation id, file name containing separators, `megaTempPath` not
 under `/temp/`. The new version-2 message fails the version and `megaTempPath` checks, which is why
 the host must be updated before the new client can complete the flow.
 

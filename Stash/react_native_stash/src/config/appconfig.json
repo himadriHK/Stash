@@ -30,9 +30,7 @@
   "UploadSettings": {
     "BatchSize": 10,
     "MaxRetries": 3,
-    "MaxHostRetries": 3,
-    "MaxFileSizeBytes": 524288000,
-    "MaxConcurrentBytes": 268435456
+    "MaxHostRetries": 3
   },
   "BackgroundUpload": {
     "Enabled": true,

@@ -1,7 +1,7 @@
 /**
- * Upload screen: pick media files (document picker), flag oversize files,
- * dedup by metadata (name + size) into SQLite, then batch upload to S3 and
- * publish Kafka upload requests. Mirrors the documented manual-upload workflow.
+ * Upload screen: pick media files (document picker), dedup by metadata (name)
+ * into SQLite, then batch upload to S3 and publish Kafka upload requests.
+ * Mirrors the documented manual-upload workflow.
  */
 import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -12,14 +12,12 @@ import { EmptyState } from '../components/EmptyState';
 import { NoteText, ScreenTitle } from '../components/FormText';
 import { useToast } from '../components/ToastContext';
 import { useAuth } from '../auth/AuthContext';
-import { appConfig } from '../config/appConfig';
 import { fileRepository } from '../services/singletons';
 import { uploadBatchAndPublishAsync } from '../services/uploadActions';
 import { createFileEntity, type FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
 import { useTheme } from '../theme/ThemeContext';
 import { FONT_FAMILY, fontSizes } from '../theme/typography';
-import { formatBytesAsMb, formatFileSize } from '../utils/format';
 import { mimeTypeForFile } from '../services/folderScannerService';
 import { forEachChunkedAsync } from '../utils/cooperative';
 import { computeMetadataHash } from '../utils/fileIdentity';
@@ -27,7 +25,6 @@ import { computeMetadataHash } from '../utils/fileIdentity';
 interface PickedFile {
   uri: string;
   name: string;
-  size: number;
 }
 
 const PICKER_TYPES = ['image/*', 'video/*'];
@@ -58,8 +55,6 @@ export function UploadScreen() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
 
-  const maxFileSize = appConfig.UploadSettings.MaxFileSizeBytes;
-
   const pickFiles = useCallback(async () => {
     if (busy) {
       return;
@@ -76,11 +71,10 @@ export function UploadScreen() {
       const next: PickedFile[] = result.assets.map((asset) => ({
         uri: asset.uri,
         name: asset.name ?? 'file',
-        size: asset.size ?? 0,
       }));
       setPicked((current) => {
-        const seen = new Set(current.map((file) => `${file.uri}|${file.name}|${file.size}`));
-        return [...current, ...next.filter((file) => !seen.has(`${file.uri}|${file.name}|${file.size}`))];
+        const seen = new Set(current.map((file) => `${file.uri}|${file.name}`));
+        return [...current, ...next.filter((file) => !seen.has(`${file.uri}|${file.name}`))];
       });
     } catch (error) {
       toast.show(error instanceof Error ? error.message : String(error), { color: colors.error });
@@ -117,7 +111,7 @@ export function UploadScreen() {
     try {
       // Deduplication reads one snapshot of tracked metadata identities instead
       // of one query per picked file, then inserts in transactional batches. No
-      // file bytes are read: identity is the name plus the byte size.
+      // file bytes are read: identity is the file name.
       const knownMetadata = await fileRepository.getAllMetadataHashesAsync();
       const entities: FileEntity[] = [];
 
@@ -125,7 +119,7 @@ export function UploadScreen() {
         picked,
         async (chunk) => {
           for (const file of chunk) {
-            const metadataHash = await computeMetadataHash(file.name, file.size);
+            const metadataHash = await computeMetadataHash(file.name);
             if (knownMetadata.has(metadataHash)) {
               skipped += 1;
               continue;
@@ -135,7 +129,6 @@ export function UploadScreen() {
               createFileEntity({
                 fileName: file.name,
                 filePath: file.uri,
-                fileSize: file.size,
                 metadataHash,
                 mimeType: mimeTypeForFile(file.name),
                 status: UploadStatus.Pending,
@@ -204,29 +197,16 @@ export function UploadScreen() {
           />
         ) : (
           picked.map((file) => {
-            const oversize = file.size > maxFileSize;
             return (
               <View
                 key={`${file.uri}|${file.name}`}
                 style={[styles.fileRow, { backgroundColor: colors.card, borderColor: colors.border }]}
               >
-                <Ionicons
-                  name={oversize ? 'alert-circle-outline' : 'document-outline'}
-                  size={22}
-                  color={oversize ? colors.error : colors.textMuted}
-                />
+                <Ionicons name="document-outline" size={22} color={colors.textMuted} />
                 <View style={styles.fileBody}>
                   <Text numberOfLines={1} style={[styles.fileName, { color: colors.text }]}>
                     {file.name}
                   </Text>
-                  <Text style={[styles.fileMeta, { color: colors.textMuted }]}>
-                    {formatFileSize(file.size)}
-                  </Text>
-                  {oversize ? (
-                    <Text style={[styles.fileMeta, styles.oversize, { color: colors.error }]}>
-                      Exceeds {formatBytesAsMb(maxFileSize)} limit
-                    </Text>
-                  ) : null}
                 </View>
                 <Pressable
                   accessibilityRole="button"
@@ -269,8 +249,8 @@ export function UploadScreen() {
         ) : null}
 
         <NoteText style={styles.limitNote}>
-          Maximum file size {formatBytesAsMb(maxFileSize)}. Files are deduplicated by name
-          and size before upload; the host deduplicates by content. Duplicates are skipped.
+          Files are deduplicated by name before upload; the host deduplicates by
+          content. Duplicates are skipped.
         </NoteText>
       </ScrollView>
     </View>
@@ -301,14 +281,6 @@ const styles = StyleSheet.create({
   fileName: {
     fontFamily: FONT_FAMILY,
     fontSize: fontSizes.body,
-  },
-  fileMeta: {
-    fontFamily: FONT_FAMILY,
-    fontSize: fontSizes.small,
-    marginTop: 2,
-  },
-  oversize: {
-    marginTop: 4,
   },
   actions: {
     marginTop: 16,

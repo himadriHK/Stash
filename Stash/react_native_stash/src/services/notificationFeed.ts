@@ -8,7 +8,6 @@
  */
 import type { FileEntity } from '../models/fileEntity';
 import { UploadStatus } from '../models/uploadStatus';
-import { formatFileSize } from '../utils/format';
 
 export type NotificationKind = 'synced' | 'uploading' | 'failed' | 'pending';
 export type NotificationFilter = 'all' | 'uploads' | 'errors' | 'synced';
@@ -86,7 +85,7 @@ export function buildNotificationItems(files: FileEntity[]): NotificationItem[] 
       file,
       kind,
       title: titleFor(file, kind),
-      subtitle: `${file.fileName} · ${formatFileSize(file.fileSize)}${detail}`,
+      subtitle: `${file.fileName}${detail}`,
       createdAt: timestampFor(file),
     };
   });

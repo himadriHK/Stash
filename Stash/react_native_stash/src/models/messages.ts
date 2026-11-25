@@ -22,7 +22,6 @@ export interface UploadRequestMessage {
    */
   fileId: string;
   fileName: string;
-  fileSize: number;
   mimeType: string;
   storageTempPath: string;
   storageProvider: string;
@@ -62,7 +61,6 @@ export async function createUploadRequestMessage(
     timestamp: new Date().toISOString(),
     fileId: await computeUploadFileIdForFile(file),
     fileName: file.fileName,
-    fileSize: file.fileSize,
     mimeType: file.mimeType,
     storageTempPath: file.storageTempPath ?? '',
     storageProvider,

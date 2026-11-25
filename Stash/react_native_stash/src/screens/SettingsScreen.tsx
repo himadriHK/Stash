@@ -26,7 +26,7 @@ import {
   profileLogUri,
   resetProfile,
 } from '../utils/profiler';
-import { formatBytesAsMb, formatDate, formatFileSize, formatRelativeTime } from '../utils/format';
+import { formatDate, formatRelativeTime } from '../utils/format';
 import {
   collectDiagnosticsAsync,
   type DiagnosticsSnapshot,
@@ -168,10 +168,6 @@ const BackupStatusSection = React.memo(function BackupStatusSection({
       <SectionTitle>Backup Status</SectionTitle>
       <View style={styles.statsGrid}>
         <StatCard label="Total Files" value={summary ? String(summary.totalFiles) : '—'} />
-        <StatCard
-          label="Total Size"
-          value={summary ? formatFileSize(summary.totalBytes) : '—'}
-        />
         <StatCard
           label="Pending Upload"
           value={summary ? String(summary.pendingCount) : '—'}
@@ -587,10 +583,6 @@ const ConfigurationSection = React.memo(function ConfigurationSection({
       <SettingsRow label="Storage region" value={appConfig.Storage.S3.Region || '—'} />
       <SettingsRow label="Upload batch size" value={String(appConfig.UploadSettings.BatchSize)} />
       <SettingsRow label="Maximum retries" value={String(appConfig.UploadSettings.MaxRetries)} />
-      <SettingsRow
-        label="Maximum file size"
-        value={formatBytesAsMb(appConfig.UploadSettings.MaxFileSizeBytes)}
-      />
       <SettingsRow
         label="Background upload"
         value={

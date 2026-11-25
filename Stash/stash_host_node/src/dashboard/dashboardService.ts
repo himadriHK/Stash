@@ -59,7 +59,8 @@ export interface DashboardJobs {
   staleLeases: number;
   oldestQueuedAt: string | null;
   failureRate: number;
-  bytes: { declared: number; downloaded: number };
+  /** Bytes streamed out of staging; uploads no longer declare a size. */
+  bytes: { downloaded: number };
   processingMs: { avg: number | null; max: number | null };
 }
 
@@ -93,7 +94,6 @@ export interface DashboardRecentJob {
   status: string;
   stage: string;
   progress: number;
-  fileSize: number;
   downloadedSize: number;
   attempts: number;
   processingTimeMs: number | null;
@@ -175,7 +175,6 @@ interface CountRow {
 }
 
 interface ByteTotalRow {
-  declared: number;
   downloaded: number;
 }
 
@@ -236,9 +235,7 @@ export class DashboardService {
       'SELECT COUNT(DISTINCT file_id) AS count FROM jobs',
     );
     this.byteTotalsStatement = this.db.prepare(
-      `SELECT COALESCE(SUM(file_size), 0) AS declared,
-              COALESCE(SUM(downloaded_size), 0) AS downloaded
-       FROM jobs`,
+      `SELECT COALESCE(SUM(downloaded_size), 0) AS downloaded FROM jobs`,
     );
     this.staleLeasesStatement = this.db.prepare(
       `SELECT COUNT(*) AS count FROM jobs
@@ -351,7 +348,6 @@ export class DashboardService {
         oldestQueuedAt: oldestQueuedRow?.oldest ?? null,
         failureRate: terminal === 0 ? 0 : failed / terminal,
         bytes: {
-          declared: Number(byteTotalsRow?.declared ?? 0),
           downloaded: Number(byteTotalsRow?.downloaded ?? 0),
         },
         processingMs: {
@@ -464,7 +460,6 @@ function toRecentJob(row: JobRow): DashboardRecentJob {
     status: row.status,
     stage: row.stage,
     progress: row.progress,
-    fileSize: row.file_size ?? 0,
     downloadedSize: row.downloaded_size ?? 0,
     attempts: row.attempts,
     processingTimeMs: row.processing_time_ms,

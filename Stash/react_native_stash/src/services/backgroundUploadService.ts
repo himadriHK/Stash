@@ -4,7 +4,7 @@
  * without warning. Mirrors Stash.Maui/Services/BackgroundUploadService.cs.
  *
  * Pass: stale recovery -> auth check -> flush pending outbox -> scan enabled
- * folders (dedup by name + size) -> lifecycle candidate selection -> batch
+ * folders (dedup by name) -> lifecycle candidate selection -> batch
  * upload -> durable outbox publish -> final flush; dead-letter files that have
  * exhausted their transfer or host retry budgets.
  *
@@ -491,7 +491,6 @@ export class BackgroundUploadService {
           fileId: hostFileId,
           fileName: file.fileName,
           filePath: file.filePath,
-          fileSize: file.fileSize,
           error: file.errorMessage,
           retryCount: file.retryCount,
           hostRetryCount: file.hostRetryCount,

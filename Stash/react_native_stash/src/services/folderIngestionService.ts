@@ -2,11 +2,11 @@
  * FolderIngestionService - turns a folder scan into deduplicated `Pending`
  * rows.
  *
- * Identity is metadata only: the normalised file name plus the byte size
- * (`computeMetadataHash`). No file content is read during a scan, so a
- * 10k-file pass never touches the native digest path; the host recomputes a
- * SHA-256 of the bytes it downloads and deduplicates on that, so byte-identical
- * files from another folder or another device still collapse there.
+ * Identity is metadata only: the normalised file name (`computeMetadataHash`).
+ * No file content is read during a scan, so a 10k-file pass never touches the
+ * native digest path; the host recomputes a SHA-256 of the bytes it downloads
+ * and deduplicates on that, so byte-identical files from another folder or
+ * another device still collapse there.
  *
  * Large folders are the normal case, so this pass is built around batched
  * database work instead of per-file round trips:
@@ -28,7 +28,7 @@ import { mimeTypeForFile, type FolderScannerService } from './folderScannerServi
 export interface FolderIngestionResult {
   scanned: number;
   discovered: number;
-  /** Scanned files skipped because their name + size is already tracked. */
+  /** Scanned files skipped because their name is already tracked. */
   duplicates: number;
 }
 
@@ -97,20 +97,19 @@ export class FolderIngestionService {
           for (const file of chunk) {
             processed += 1;
 
-            const metadataHash = await computeMetadataHash(file.name, file.size);
+            const metadataHash = await computeMetadataHash(file.name);
             if (knownMetadata.has(metadataHash)) {
               duplicates += 1;
               continue;
             }
-            // Mark before the insert so two files with the same name and size
-            // in the same folder only produce one row.
+            // Mark before the insert so two files with the same name in the
+            // same folder only produce one row.
             knownMetadata.add(metadataHash);
 
             batch.push(
               createFileEntity({
                 fileName: file.name,
                 filePath: file.uri,
-                fileSize: file.size,
                 metadataHash,
                 mimeType: mimeTypeForFile(file.name),
                 createdAt: file.createdAt,

@@ -26,8 +26,8 @@ feature set documented in `FlutterStash*.md` and `ReactNativeStashPlan.md`.
   `UNSIGNED-PAYLOAD`, host-only signing) and transfers through short-lived
   presigned URLs. Native uploads stream through SDK 58 `File.createUploadTask`
   (whole files are not buffered in JS); web uploads the picked `Blob` with
-  `fetch`. Byte-aware batched uploads (`BatchSize`, `MaxConcurrentBytes`), retry state
-  (`MaxRetries`), SHA-256 dedup, 500 MB client limit, logical temp path
+  `fetch`. Count-bounded batched uploads (`BatchSize`), retry state
+  (`MaxRetries`), SHA-256 dedup, logical temp path
   `/temp/uploads/{deviceId}/{fileId}/{fileName}`, and a manual Upload screen (document
   picker → hash → dedup → batch → publish).
 - **Kafka proxy transport** — `kafka_proxy_vercel/` Vercel Function produces
@@ -114,7 +114,7 @@ Non-secret settings stay in `appconfig.json`:
 | `Kafka.Proxy.*` (except `BaseUrl`) | Proxy polling interval/timeout and page size |
 | `Kafka.Topic*` | Upload request/response and dead-letter topics |
 | `Storage.Provider` / `Storage.S3` | Storage provider and S3 defaults |
-| `UploadSettings` | `BatchSize`, `MaxConcurrentBytes`, `MaxRetries`, `MaxFileSizeBytes` |
+| `UploadSettings` | `BatchSize`, `MaxRetries`, `MaxHostRetries` |
 | `BackgroundUpload` | `Enabled`, `IntervalMinutes` (15), `MaxFilesPerRun` (50) |
 
 **Never commit `.env`.** `EXPO_PUBLIC_*` values are inlined into the client bundle, so use scoped/limited credentials and rotate anything that was previously committed.
@@ -173,8 +173,8 @@ known follow-up.
   inlined into the app bundle. Use scoped credentials and rotate them; presigned
   URLs are short-lived (3600 seconds by default) but are themselves bearers.
 - A single presigned PUT is limited by S3 to 5 GB. Multipart/resumable upload and
-  bucket lifecycle configuration are deferred; the app's 500 MB
-  `MaxFileSizeBytes` cap keeps single-PUT uploads below that.
+  bucket lifecycle configuration are deferred; the app no longer enforces a
+  client-side file-size cap because it does not read file sizes.
 - The setup guide covers configuration, the upload pipeline, the Kafka payload
   and troubleshooting: **[docs/SETUP_AND_USAGE.md](docs/SETUP_AND_USAGE.md)**.
   The full-stack runbook is

@@ -57,7 +57,6 @@ interface SeedJobOptions {
   id: string;
   createdAt: string;
   fileId: string;
-  fileSize: number;
   fileName?: string;
   downloadedSize?: number;
   status?: JobStatus;
@@ -78,7 +77,6 @@ function seedJob(options: SeedJobOptions): void {
     fileId: options.fileId,
     requestFileId: options.fileId,
     fileName: options.fileName ?? `${options.id}.jpg`,
-    fileSize: options.fileSize,
     mimeType: 'image/jpeg',
     storageProvider: 'S3',
     storageTempPath: 'secret-storage-temp-path',
@@ -113,7 +111,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-1',
     createdAt: createdAt(0),
     fileId: 'file-shared',
-    fileSize: 1000,
     downloadedSize: 1000,
     status: 'completed',
     stage: 'done',
@@ -126,7 +123,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-2',
     createdAt: createdAt(1),
     fileId: 'file-shared',
-    fileSize: 2000,
     downloadedSize: 500,
     status: 'failed',
     stage: 'done',
@@ -139,7 +135,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-3',
     createdAt: createdAt(2),
     fileId: 'file-b',
-    fileSize: 2000,
     downloadedSize: 2000,
     status: 'failed',
     stage: 'done',
@@ -152,7 +147,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-4',
     createdAt: createdAt(3),
     fileId: 'file-c',
-    fileSize: 300,
     downloadedSize: 100,
     status: 'running',
     stage: 'download',
@@ -163,7 +157,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-5',
     createdAt: createdAt(-1),
     fileId: 'file-d',
-    fileSize: 400,
     status: 'queued',
     stage: 'queued',
   });
@@ -171,7 +164,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-6',
     createdAt: createdAt(5),
     fileId: 'file-e',
-    fileSize: 500,
     downloadedSize: 400,
     status: 'failed',
     stage: 'done',
@@ -184,7 +176,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-7',
     createdAt: createdAt(6),
     fileId: 'file-f',
-    fileSize: 600,
     status: 'failed',
     stage: 'done',
     progress: 100,
@@ -194,7 +185,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-8',
     createdAt: createdAt(7),
     fileId: 'file-g',
-    fileSize: 700,
     status: 'failed',
     stage: 'done',
     progress: 100,
@@ -204,7 +194,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-9',
     createdAt: createdAt(8),
     fileId: 'file-h',
-    fileSize: 800,
     downloadedSize: 400,
     status: 'cancelled',
     stage: 'done',
@@ -214,7 +203,6 @@ function seedScenario(times: ScenarioTimes): void {
     id: 'job-10',
     createdAt: createdAt(9),
     fileId: 'file-i',
-    fileSize: 900,
     downloadedSize: 900,
     status: 'completed',
     stage: 'done',
@@ -320,7 +308,7 @@ describe('DashboardService', () => {
       staleLeases: 0,
       oldestQueuedAt: null,
       failureRate: 0,
-      bytes: { declared: 0, downloaded: 0 },
+      bytes: { downloaded: 0 },
       processingMs: { avg: null, max: null },
     });
 
@@ -498,7 +486,7 @@ describe('DashboardService', () => {
     expect(snapshot.jobs.staleLeases).toBe(1);
     expect(snapshot.jobs.oldestQueuedAt).toBe(createdAt(-1));
     expect(snapshot.jobs.failureRate).toBeCloseTo(5 / 7, 10);
-    expect(snapshot.jobs.bytes).toEqual({ declared: 9200, downloaded: 5300 });
+    expect(snapshot.jobs.bytes).toEqual({ downloaded: 5300 });
     expect(snapshot.jobs.processingMs.avg).toBeCloseTo(3000, 10);
     expect(snapshot.jobs.processingMs.max).toBe(5000);
 
@@ -541,7 +529,6 @@ describe('DashboardService', () => {
       status: 'completed',
       stage: 'done',
       progress: 100,
-      fileSize: 900,
       downloadedSize: 900,
       attempts: 0,
       processingTimeMs: 4000,
@@ -579,7 +566,6 @@ describe('DashboardService', () => {
       id: 'secret-job',
       createdAt: createdAt(0),
       fileId: 'secret-file-id',
-      fileSize: 42,
       downloadedSize: 42,
       status: 'completed',
       stage: 'done',
@@ -662,7 +648,6 @@ describe('DashboardService', () => {
       'downloadedSize',
       'errorCode',
       'fileName',
-      'fileSize',
       'finishedAt',
       'id',
       'processingTimeMs',
@@ -722,7 +707,6 @@ describe('DashboardService', () => {
         id: `fail-${index}`,
         createdAt: createdAt(index),
         fileId: `fail-file-${index}`,
-        fileSize: 10,
         status: 'failed',
         stage: 'done',
         progress: 100,

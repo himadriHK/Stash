@@ -9,10 +9,9 @@ export interface FileEntity {
   id: string;
   fileName: string;
   filePath: string;
-  fileSize: number;
   /**
-   * Local dedup identity: SHA-256 over the normalised name and the byte size
-   * (no file content is read). The database enforces uniqueness.
+   * Local dedup identity: SHA-256 over the normalised name (no file content or
+   * size lookup is read). The database enforces uniqueness.
    */
   metadataHash: string;
   mimeType: string;
@@ -54,7 +53,6 @@ export function createFileEntity(draft: FileEntityDraft): FileEntity {
     id: draft.id ?? uuid(),
     fileName: draft.fileName,
     filePath: draft.filePath,
-    fileSize: draft.fileSize ?? 0,
     metadataHash: draft.metadataHash,
     mimeType: draft.mimeType ?? 'application/octet-stream',
     createdAt: draft.createdAt ?? now,

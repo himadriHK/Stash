@@ -16,8 +16,6 @@ import type { StorageUploadSource } from './storageProvider';
 const DEFAULT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_UPLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
-/** Conservative throughput used to size a timeout for a known file size. */
-const ASSUMED_UPLOAD_BYTES_PER_SECOND = 50 * 1024;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -60,18 +58,14 @@ async function responseSnippetAsync(response: Response): Promise<string> {
   }
 }
 
-/** Default 30 minutes, or a size-based estimate clamped to 5 minutes..2 hours. */
+/** Caller override clamped to 5 minutes..2 hours, otherwise the default. */
 function resolveUploadTimeoutMs(source: StorageUploadSource): number {
   if (
     typeof source.timeoutMs === 'number' &&
     Number.isFinite(source.timeoutMs) &&
     source.timeoutMs > 0
   ) {
-    return Math.floor(source.timeoutMs);
-  }
-  if (typeof source.size === 'number' && Number.isFinite(source.size) && source.size > 0) {
-    const estimated = Math.ceil((source.size / ASSUMED_UPLOAD_BYTES_PER_SECOND) * 1000);
-    return Math.min(MAX_UPLOAD_TIMEOUT_MS, Math.max(MIN_UPLOAD_TIMEOUT_MS, estimated));
+    return Math.min(MAX_UPLOAD_TIMEOUT_MS, Math.max(MIN_UPLOAD_TIMEOUT_MS, Math.floor(source.timeoutMs)));
   }
   return DEFAULT_UPLOAD_TIMEOUT_MS;
 }
@@ -242,7 +236,6 @@ export async function putFileToPresignedUrlAsync(
     await logError('s3.transfer.upload', redactError(error), {
       name: source.name,
       mimeType: source.mimeType,
-      size: source.size,
       scheme: schemeOf(source.uri),
     });
     throw error;

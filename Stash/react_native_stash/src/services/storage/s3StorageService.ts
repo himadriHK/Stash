@@ -109,9 +109,6 @@ export class S3StorageService implements StorageProvider {
   async uploadFileAsync(source: StorageUploadSource, remotePath: string): Promise<string> {
     try {
       const config = this.resolve();
-      if (source.size === 0) {
-        throw new Error('Cannot upload an empty file (0 bytes) to S3.');
-      }
       const canonicalPath = this.normalizeRemotePath(remotePath);
       // The key contains the content hash, so an existing object already holds
       // these exact bytes. A HEAD failure (permissions, network) is ignored and
@@ -127,7 +124,7 @@ export class S3StorageService implements StorageProvider {
       await putFileToPresignedUrlAsync(url, source);
       return canonicalPath;
     } catch (error) {
-      await logError('s3.upload', redactError(error), { remotePath, name: source.name, size: source.size });
+      await logError('s3.upload', redactError(error), { remotePath, name: source.name });
       throw error;
     }
   }

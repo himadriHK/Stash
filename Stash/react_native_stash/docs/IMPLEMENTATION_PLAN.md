@@ -197,7 +197,7 @@ responses from corrupting state.
 - Auth failures keep outbox rows pending indefinitely by design so a token
   refresh can recover them; a permanently invalid identity is not dead-lettered
   until the transport returns a non-auth terminal error.
-- Local-terminal failures (`failure_stage='local', including missing/oversize
+- Local-terminal failures (`failure_stage='local', including missing
   files) and publish-terminal failures are excluded from automatic background
   candidates and require an explicit manual retry.
 - Proxy-side response filtering landed in Phase 4; ACK/commit-after-apply and
@@ -302,8 +302,8 @@ to the whole library.
 **Tasks**
 
 - [x] ~~Add a hash cache keyed by URI + size + lastModified (`file_hash_cache`)~~
-      Later retired: identity is now metadata only (name + size), so nothing is
-      hashed on the device and the cache table is dropped by schema v4. Was in
+      Later retired: identity is now metadata only (name), so nothing is hashed
+      on the device and the cache table is dropped by schema v4. Was in
       `src/data/hashCacheRepository.ts` and
       `src/services/folderIngestionService.ts`.
 - [x] Make scans incremental: compare against cached metadata and skip unchanged
@@ -316,8 +316,10 @@ to the whole library.
       `idx_files_status_discovered`).
 - [x] Batch writes in transactions where multiple rows change together
       (`FileRepository.addManyAsync`, 25-row ingestion batches).
-- [x] Move to adaptive, byte-weighted upload concurrency so large files cannot
-      starve small ones (`UploadSettings.MaxConcurrentBytes`).
+- [x] ~~Use adaptive, byte-weighted upload concurrency so large files cannot
+      starve small ones~~ Later retired with the file-size removal: transfers no
+      longer carry a size, so batches are count-bounded and the concurrency pool
+      (`MAX_CONCURRENT_UPLOADS`) is the only limiter.
 - [x] Use a content-hash-based S3 key for integrity and stable deduplication;
       repeated uploads reuse an existing object via HEAD. The signer still signs
       the SHA-256 payload hash on PUT.
@@ -539,7 +541,7 @@ Append one row after each phase (and after any significant re-verification).
 | Host S3 storage provider + request v2 acceptance | `Blocked` | Host still stages through MEGA and validates version 1 (`megaTempPath`), so RN S3/v2 requests are rejected. Cross-team. | Host reads S3 temporary objects and accepts version-2 requests end to end. |
 | Proxy ACK / inbox protocol (commit-after-delivery) | `Blocked` | The gateway commits offsets before the client applies a record; making it safe needs an ACK or durable inbox protocol. Proxy-side identity filtering alone does not fix it. Cross-team. | Proxy commits only after delivery/ACK, or exposes a durable inbox. |
 | Server-side response routing / read amplification | `Blocked` | Each device's poll can still read other devices' response records from the shared topic before the proxy drops them; fixing this needs host/proxy routing (per-device topics, partitioning or a durable cursor). | Response records are routed or partitioned per device/user so other devices' records are not read. |
-| Multipart / resumable upload and bucket lifecycle configuration | `Deferred` | Single signed PUT remains capped by the app's 500 MB limit and S3's 5 GB single-PUT limit; requires part-level slicing/presigning, persisted upload state, and a host-compatible key/contract. | Provider supports multipart signing and a bucket lifecycle policy is approved for temporary objects. |
+| Multipart / resumable upload and bucket lifecycle configuration | `Deferred` | Single signed PUT remains capped by S3's 5 GB single-PUT limit (the app no longer enforces a client-side cap); requires part-level slicing/presigning, persisted upload state, and a host-compatible key/contract. | Provider supports multipart signing and a bucket lifecycle policy is approved for temporary objects. |
 | Remote telemetry / metrics export | `Deferred` | Requires approval and infrastructure; local logs/metrics/diagnostics cover Phase 5 first. | Approved backend and retention/privacy policy. |
 | Structured telemetry/log shipping | `Deferred` | Local `file_events` and the persistent error log cover on-device diagnosis; shipping logs/metrics off-device needs approval and infrastructure. | An approved telemetry backend with retention/privacy rules and an opt-in client. |
 | SLO alert delivery | `Deferred` | SLO targets are documented, but alert routing/delivery needs an operations backend and on-call ownership. | SLOs are wired to a monitored alert channel with documented response procedures. |
@@ -547,7 +549,7 @@ Append one row after each phase (and after any significant re-verification).
 | CI unit-test/lint suite | `Deferred` | Only the `typecheck` script was added; lint configuration and transition/dedup/outbox unit tests need a runner decision. | CI runs typecheck, lint and unit tests on every change. |
 | Device performance baseline | `Deferred` | No representative device or library is available in this environment; only the typecheck and web-export checks were run. | Capture app boot, first-scan and hash timings, and upload success rate on a representative device/library. |
 **Phase 3 deferred entry:** Multipart/resumable upload and bucket lifecycle
-configuration — deferred; single signed PUT remains capped by the app's 500 MB
+configuration — deferred; single signed PUT remains capped by S3's 5 GB
 limit and S3's 5 GB single-PUT limit; requires part-level slicing/presigning,
 persisted upload state, and a host-compatible key/contract.
 

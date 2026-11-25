@@ -12,7 +12,6 @@ import { profileAsync } from '../utils/profiler';
 
 export interface FileSummary {
   totalFiles: number;
-  totalBytes: number;
   pendingCount: number;
   lastActivityAt: string | null;
 }
@@ -21,7 +20,6 @@ export interface FileRow {
   id: string;
   file_name: string;
   file_path: string;
-  file_size: number;
   metadata_hash: string;
   mime_type: string;
   created_at: string;
@@ -54,7 +52,6 @@ export function mapFileRow(row: FileRow): FileEntity {
     id: row.id,
     fileName: row.file_name,
     filePath: row.file_path,
-    fileSize: row.file_size,
     metadataHash: row.metadata_hash,
     mimeType: row.mime_type,
     createdAt: row.created_at,
@@ -93,7 +90,6 @@ function toWriteParams(file: FileEntity): Record<string, string | number | null>
     $id: file.id,
     $file_name: file.fileName,
     $file_path: file.filePath,
-    $file_size: file.fileSize,
     $metadata_hash: file.metadataHash.toLowerCase(),
     $mime_type: file.mimeType,
     $created_at: file.createdAt,
@@ -126,14 +122,14 @@ function toWriteParams(file: FileEntity): Record<string, string | number | null>
  * Shared INSERT column/value lists so the single-row and batch inserts cannot
  * drift apart. `addManyAsync` reuses these with an `INSERT OR IGNORE` prefix.
  */
-const FILE_INSERT_COLUMNS = `id, file_name, file_path, file_size, metadata_hash, mime_type,
+const FILE_INSERT_COLUMNS = `id, file_name, file_path, metadata_hash, mime_type,
   created_at, modified_at, discovered_at, status, storage_temp_path,
   permanent_path, error_message, retry_count, last_attempt_at,
   device_id, user_id, thumbnails, converted_format, is_deduplicated,
   upload_started_at, processing_started_at, last_response_at,
   request_correlation_id, request_message_id, host_retry_count,
   next_attempt_at, failure_stage, updated_at`;
-const FILE_INSERT_VALUES = `$id, $file_name, $file_path, $file_size, $metadata_hash, $mime_type,
+const FILE_INSERT_VALUES = `$id, $file_name, $file_path, $metadata_hash, $mime_type,
   $created_at, $modified_at, $discovered_at, $status, $storage_temp_path,
   $permanent_path, $error_message, $retry_count, $last_attempt_at,
   $device_id, $user_id, $thumbnails, $converted_format, $is_deduplicated,
@@ -215,13 +211,11 @@ export class FileRepository {
     const db = await this.open();
     const row = await db.getFirstAsync<{
       total_files: number;
-      total_bytes: number;
       pending_count: number;
       last_activity_at: string | null;
     }>(
       `SELECT
          COUNT(*) AS total_files,
-         COALESCE(SUM(file_size), 0) AS total_bytes,
          COALESCE(SUM(CASE WHEN status NOT IN ('Completed', 'Deduplicated') THEN 1 ELSE 0 END), 0)
            AS pending_count,
          MAX(COALESCE(updated_at, last_response_at, last_attempt_at, processing_started_at,
@@ -230,7 +224,6 @@ export class FileRepository {
     );
     return {
       totalFiles: row?.total_files ?? 0,
-      totalBytes: row?.total_bytes ?? 0,
       pendingCount: row?.pending_count ?? 0,
       lastActivityAt: row?.last_activity_at ?? null,
     };
@@ -336,7 +329,7 @@ export class FileRepository {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/UNIQUE constraint failed: files\.metadata_hash/i.test(message)) {
-        throw new Error(`A file with this name and size is already tracked: ${file.fileName}`);
+        throw new Error(`A file with this name is already tracked: ${file.fileName}`);
       }
       throw error;
     }
@@ -373,7 +366,7 @@ export class FileRepository {
     await runWriteAsync(
       db,
       `UPDATE files SET
-        file_name = $file_name, file_path = $file_path, file_size = $file_size,
+        file_name = $file_name, file_path = $file_path,
         metadata_hash = $metadata_hash, mime_type = $mime_type,
         created_at = $created_at, modified_at = $modified_at,
         discovered_at = $discovered_at, status = $status,

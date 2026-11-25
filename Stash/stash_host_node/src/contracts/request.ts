@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-export const MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024;
 export const MAX_METADATA_BYTES = 64 * 1024;
 export const MAX_IDENTIFIER_LENGTH = 128;
 
@@ -60,7 +59,6 @@ export const uploadRequestSchema = z
     timestamp: isoDateString.optional(),
     fileId: z.string().regex(SHA256_PATTERN, 'Must be a 64-character hex SHA-256 value').transform((value) => value.toLowerCase()),
     fileName: z.string().refine(isSafeFileName, 'Must be a safe file name without separators or traversal segments'),
-    fileSize: z.number().int().positive().max(MAX_FILE_SIZE_BYTES),
     mimeType: z
       .string()
       .transform((value) => value.toLowerCase())

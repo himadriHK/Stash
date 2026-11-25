@@ -104,7 +104,7 @@ Assumptions: exactly one writer per DB/library; the process is non-root with rea
 ### 5.1 Version 2 request (`stash.upload.request`, key = `fileId`)
 
 ```json
-{"messageId":"uuid","timestamp":"2026-11-21T00:00:00.000Z","fileId":"<64 hex>","fileName":"IMG_0001.heic","fileSize":1234567,"mimeType":"image/heic","storageTempPath":"/temp/uploads/<deviceId>/<contentHash>/IMG_0001.heic","storageProvider":"S3","metadata":{"createdAt":"...","modifiedAt":"..."},"deviceId":"<32 hex>","userId":"<id>","correlationId":"uuid","version":2}
+{"messageId":"uuid","timestamp":"2026-11-21T00:00:00.000Z","fileId":"<64 hex>","fileName":"IMG_0001.heic","mimeType":"image/heic","storageTempPath":"/temp/uploads/<deviceId>/<contentHash>/IMG_0001.heic","storageProvider":"S3","metadata":{"createdAt":"...","modifiedAt":"..."},"deviceId":"<32 hex>","userId":"<id>","correlationId":"uuid","version":2}
 ```
 
 | Field | Rule |
@@ -112,9 +112,8 @@ Assumptions: exactly one writer per DB/library; the process is non-root with rea
 | `version` | Integer, exactly `2`; anything else rejects. |
 | `messageId` | Non-empty string, <=128 chars. |
 | `timestamp` | Optional ISO-8601; diagnostics only. |
-| `fileId` | Client identifier: 64 hex chars (a GUID the device salted with its name + size metadata hash), normalized lowercase. Echoed in the response and used as the Kafka key; it is not a content hash. |
+| `fileId` | Client identifier: 64 hex chars (a GUID the device salted with its file-name metadata hash), normalized lowercase. Echoed in the response and used as the Kafka key; it is not a content hash. |
 | `fileName` | 1-255 chars, no `/`, `\`, control chars, not `.`/`..`; extension/MIME hint only. |
-| `fileSize` | Integer `>0` and `<=524288000`; must match streamed bytes and S3 `ContentLength` when present. |
 | `mimeType` | `^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$`, no whitespace, lowercased. |
 | `storageTempPath` | Starts `/temp/`, forward slashes, no backslash/`.`/`..`/empty segments, <=1024; logical path, not a key/URL. |
 | `storageProvider` | Case-insensitive `S3` only; others reject explicitly. |
@@ -164,7 +163,7 @@ Writer rules: resolve then require the path to start with `path.resolve(LOCAL_RO
 
 SQLite at `DB_PATH`: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`, `busy_timeout=5000`, `temp_store=MEMORY`. Ordered migrations run in a transaction and are tracked by `PRAGMA user_version` (v1 in phase 1).
 
-`jobs`: `id` PK; `correlation_id` UNIQUE; `message_id`; `file_id`; `request_file_id`; `content_hash` (SHA-256 computed by the verify stage, names the permanent object and thumbnails); `file_name`; `file_size`; `downloaded_size`; `mime_type`; `storage_provider`; `storage_temp_path`; `storage_key`; `user_id`; `device_id`; `metadata_json`; `status` (`queued|running|completed|failed|cancelled`); `stage` (`queued|download|verify|deduplicate|convert|thumbnails|store|respond|delete_temp|done`); `failed_stage`; `progress` 0-100; `attempts`; `max_attempts`; `stage_attempts_json`; `next_attempt_at`; `lease_owner`; `lease_expires_at`; `heartbeat_at`; `cancel_requested`; `deduplicated`; `permanent_path`; `thumbnails_json`; `converted_format`; `temp_dir`; `error_code`; `error_message`; `processing_time_ms`; `created_at`; `started_at`; `finished_at`; `updated_at`.
+`jobs`: `id` PK; `correlation_id` UNIQUE; `message_id`; `file_id`; `request_file_id`; `content_hash` (SHA-256 computed by the verify stage, names the permanent object and thumbnails); `file_name`; `downloaded_size`; `mime_type`; `storage_provider`; `storage_temp_path`; `storage_key`; `user_id`; `device_id`; `metadata_json`; `status` (`queued|running|completed|failed|cancelled`); `stage` (`queued|download|verify|deduplicate|convert|thumbnails|store|respond|delete_temp|done`); `failed_stage`; `progress` 0-100; `attempts`; `max_attempts`; `stage_attempts_json`; `next_attempt_at`; `lease_owner`; `lease_expires_at`; `heartbeat_at`; `cancel_requested`; `deduplicated`; `permanent_path`; `thumbnails_json`; `converted_format`; `temp_dir`; `error_code`; `error_message`; `processing_time_ms`; `created_at`; `started_at`; `finished_at`; `updated_at`.
 
 Indexes: `(status, next_attempt_at)`, `(status, stage)`, `(lease_expires_at)`, `(file_id, user_id)`, `(created_at DESC)`, `(finished_at DESC)`, `(user_id, created_at DESC)`, `(device_id, created_at DESC)`.
 
@@ -215,7 +214,7 @@ Atomic writes: write `<target>.part-<jobId>-<random>` in the destination directo
 
 **Outbox/cleanup.** Dispatcher claims due `pending` rows, publishes, marks `sent`, then triggers delete. Publish failure leaves the row pending with backoff; the job stays at respond until send succeeds, so deletion never precedes the response. A response is never published directly by a worker. Lifecycle rule on `temp/` (e.g. 7 days) is the last-resort cleanup.
 
-**Large files.** S3 body is streamed to disk (`pipeline`), never buffered; `HeadObject` checks size first, and the streamed count is checked again. SHA-256 reads 1-4 MB chunks in worker threads. Bounded concurrency: jobs 2, images 2, video 1; a global semaphore limits memory. Disk guard requires `free >= fileSize*3 + 5 GB` before download and again before convert/store; failure is a `resource` retry and pauses claims while cleanup runs. Temp layout `TEMP_DIR/jobs/<id>/`; startup sweeps unreferenced dirs older than 24 h. ffmpeg uses `-progress pipe:1 -nostats`, ffprobe duration, SIGTERM then process-tree kill; sharp runs on libuv, HEIC decode in a dedicated worker; Pino is async. Pause Kafka above 1,000 queued+running, below 5 GB free, or on outbox backlog; resume below 200.
+**Large files.** S3 body is streamed to disk (`pipeline`), never buffered; uploads no longer declare a size, so `HeadObject` supplies the expected `ContentLength` and the streamed count is checked against it. SHA-256 reads 1-4 MB chunks in worker threads. Bounded concurrency: jobs 2, images 2, video 1; a global semaphore limits memory. Disk guard requires `free >= ContentLength*3 + 5 GB` before download and again before convert/store; failure is a `resource` retry and pauses claims while cleanup runs. Temp layout `TEMP_DIR/jobs/<id>/`; startup sweeps unreferenced dirs older than 24 h. ffmpeg uses `-progress pipe:1 -nostats`, ffprobe duration, SIGTERM then process-tree kill; sharp runs on libuv, HEIC decode in a dedicated worker; Pino is async. Pause Kafka above 1,000 queued+running, below 5 GB free, or on outbox backlog; resume below 200.
 
 **Recovery cases.**
 

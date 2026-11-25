@@ -152,7 +152,7 @@ Plan date: 2026-11-21. Last updated: 2026-11-21.
 | Multi-node scaling | Deferred | Single-writer SQLite and local library are by design for Phases 1-6. |
 | UI screenshots / browser E2E | Deferred | Phase 5 not started; only a build check is planned. |
 | Backend-issued S3 credentials / STS | Deferred | S3 credentials are still bundled; presigned issuance is a follow-up. |
-| Multipart/resumable uploads above 500 MB | Out of scope | Single signed PUT capped by the app's 500 MB limit. |
+| Multipart/resumable uploads above 500 MB | Out of scope | Single signed PUT; the app no longer declares a file size. |
 | Proxy ACK / inbox | Deferred | Offsets are still committed before client apply. |
 
 ## 7. Maintenance

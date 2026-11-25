@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS jobs (
   file_id TEXT,
   request_file_id TEXT,
   file_name TEXT,
-  file_size INTEGER,
   downloaded_size INTEGER,
   mime_type TEXT,
   storage_provider TEXT,
@@ -122,6 +121,18 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'host-computed content hash',
     up(db) {
       db.exec(V2_CONTENT_HASH);
+    },
+  },
+  {
+    version: 3,
+    name: 'retire declared file size',
+    up(db) {
+      // Upload requests no longer declare a size; the download stage derives it
+      // from the staged object's ContentLength. Older databases still carry the
+      // column, fresh ones never had it, so only drop it when present.
+      const columns = db.prepare('PRAGMA table_info(jobs)').all() as { name: string }[];
+      if (!columns.some((column) => column.name === 'file_size')) return;
+      db.exec('ALTER TABLE jobs DROP COLUMN file_size;');
     },
   },
 ];

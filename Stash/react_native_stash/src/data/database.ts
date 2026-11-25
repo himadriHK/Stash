@@ -69,7 +69,6 @@ CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY NOT NULL,
   file_name TEXT NOT NULL,
   file_path TEXT NOT NULL,
-  file_size INTEGER NOT NULL,
   metadata_hash TEXT NOT NULL UNIQUE,
   mime_type TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -231,12 +230,12 @@ async function migrateScalingIndexesAsync(db: SQLite.SQLiteDatabase): Promise<vo
 
 /**
  * Version 4 migration: replace the content-hash identity with the metadata
- * identity (normalised name + size). The column is renamed so existing values
+ * identity (the normalised file name). The column is renamed so existing values
  * stay until they are recomputed, the unique index keeps enforcing one row per
  * identity, and the hash cache table (which existed only to remember content
  * digests) is dropped.
  *
- * Recomputing may collide when two tracked rows share a name and size; that row
+ * Recomputing may collide when two tracked rows share a name; the later row
  * keeps its legacy value rather than failing the upgrade, and a later scan
  * simply inserts it under the shared identity.
  */
@@ -255,22 +254,57 @@ async function migrateMetadataIdentityAsync(db: SQLite.SQLiteDatabase): Promise<
     'CREATE INDEX IF NOT EXISTS idx_files_metadata_hash ON files (metadata_hash);',
   );
 
-  const rows = await db.getAllAsync<{ id: string; file_name: string; file_size: number }>(
-    'SELECT id, file_name, file_size FROM files',
+  const rows = await db.getAllAsync<{ id: string; file_name: string | null }>(
+    'SELECT id, file_name FROM files',
   );
   for (const row of rows) {
-    const metadataHash = await computeMetadataHash(row.file_name ?? '', row.file_size ?? 0);
+    const metadataHash = await computeMetadataHash(row.file_name ?? '');
     try {
       await db.runAsync('UPDATE files SET metadata_hash = ? WHERE id = ?', [metadataHash, row.id]);
     } catch (error) {
       console.warn(
-        '[database] Kept the legacy identity for a row that collides with an existing name + size.',
+        '[database] Kept the legacy identity for a row that collides with an existing name.',
         error,
       );
     }
   }
 
   await db.execAsync('DROP TABLE IF EXISTS file_hash_cache;');
+}
+
+/**
+ * Version 5 migration: retire the per-file byte size. File identity, dedupe and
+ * the upload request no longer carry a size, so the column and the values in it
+ * are no longer read or written. Rows are re-keyed on the name-only identity
+ * first; a row whose name already exists keeps its legacy hash (the unique
+ * index wins) instead of failing the upgrade.
+ */
+async function migrateNameOnlyIdentityAsync(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(files)');
+  const names = new Set(columns.map((column) => column.name));
+
+  const rows = await db.getAllAsync<{ id: string; file_name: string | null }>(
+    'SELECT id, file_name FROM files',
+  );
+  for (const row of rows) {
+    const metadataHash = await computeMetadataHash(row.file_name ?? '');
+    try {
+      await db.runAsync('UPDATE files SET metadata_hash = ? WHERE id = ?', [metadataHash, row.id]);
+    } catch (error) {
+      console.warn(
+        '[database] Kept the legacy identity for a row that collides with an existing name.',
+        error,
+      );
+    }
+  }
+
+  if (names.has('file_size')) {
+    try {
+      await db.execAsync('ALTER TABLE files DROP COLUMN file_size');
+    } catch (error) {
+      console.warn('[database] Could not drop the retired files.file_size column.', error);
+    }
+  }
 }
 
 interface Migration {
@@ -299,6 +333,11 @@ const MIGRATIONS: readonly Migration[] = [
     version: 4,
     description: 'metadata identity instead of content hash',
     run: migrateMetadataIdentityAsync,
+  },
+  {
+    version: 5,
+    description: 'name-only identity and retired file size',
+    run: migrateNameOnlyIdentityAsync,
   },
 ];
 

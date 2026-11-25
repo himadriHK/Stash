@@ -11,7 +11,7 @@
 
 ## 1. System at a glance
 
-The app is a local-first backup client. It discovers media metadata (name, size, timestamps), deduplicates by name + size in SQLite, uploads new bytes to S3 through short-lived presigned URLs, then asks the host to process the object through Kafka. The host recomputes the SHA-256 of the downloaded bytes and deduplicates on that hash, so byte-identical files from different devices collapse on the host. Host responses come back through Kafka; the consumer applies status and permanent-library fields to the same SQLite row.
+The app is a local-first backup client. It discovers media metadata (name, timestamps), deduplicates by name in SQLite, uploads new bytes to S3 through short-lived presigned URLs, then asks the host to process the object through Kafka. The host recomputes the SHA-256 of the downloaded bytes and deduplicates on that hash, so byte-identical files from different devices collapse on the host. Host responses come back through Kafka; the consumer applies status and permanent-library fields to the same SQLite row.
 
 Text flow:
 
@@ -19,7 +19,7 @@ Text flow:
 2. `Shell` renders `RootNavigator`, a headless `BackgroundServices` component and `StatusBar`.
 3. `AuthProvider` restores a session from SecureStore (localStorage on web) and decides whether the root stack shows Login/Register or Main.
 4. Files enter the app in two ways: the Upload screen document picker, or the folder scanner walking configured folders on native platforms.
-5. Identity is metadata only: `computeMetadataHash(fileName, fileSize)` hashes the normalised name and the byte size, and `files.metadata_hash` is `UNIQUE`, so a known name + size is skipped rather than inserted. No file bytes are read on the device; the host hashes the download.
+5. Identity is metadata only: `computeMetadataHash(fileName)` hashes the normalised name, and `files.metadata_hash` is `UNIQUE`, so a known name is skipped rather than inserted. File sizes are never read (the scanner skips the per-entry stat on SAF entirely); no file bytes are read on the device, and the host hashes the download.
 6. `FileLifecycleService` is the only status writer. It applies guarded `Pending` -> `Uploading` -> `Uploaded` -> `Processing` -> `Completed`/`Failed` transitions, recovers stale rows and enforces the transfer/host retry budgets. `UploadManager` builds `/temp/uploads/{deviceId}/{fileId}/{fileName}` (the `fileId` segment is the row GUID salted with the metadata hash), transfers bytes through the storage provider (S3) and mirrors accepted transitions in memory.
 7. `uploadActions` or the background pass enqueues a version-2 request in the durable outbox; `OutboxPublisher` publishes it keyed by the client `fileId` and moves the row to `Processing` only after Kafka accepts the record. Responses are matched back through the request `correlationId`.
 8. The host performs conversion, thumbnails and permanent storage. The app does not perform those steps.
@@ -32,7 +32,7 @@ Text flow:
       +-- folder scanner ----------> local media
       |
       v
- Metadata identity (name + size) + SQLite dedup (stash.db, metadata_hash UNIQUE)
+ Metadata identity (name) + SQLite dedup (stash.db, metadata_hash UNIQUE)
       |
       v
  UploadManager -- presigned SigV4 PUT --> S3 temporary object
@@ -259,7 +259,7 @@ The diagram groups implementation files, not runtime processes. `Wiring` is the 
 | Screen | LoginScreen | `src/screens/LoginScreen.tsx` | Email/password/device ID sign-in, busy state, error text, link to Register. |
 | Screen | RegisterScreen | `src/screens/RegisterScreen.tsx` | Registration with password match and 8-character validation, device ID, immediate session. |
 | Screen | FilesScreen | `src/screens/FilesScreen.tsx` | Paginated file cards (50 per page, append on end reached), status chips, pull-to-refresh background pass, retry for Failed/Retrying, details dialog, Upload FAB. |
-| Screen | UploadScreen | `src/screens/UploadScreen.tsx` | Document picker for `image/*` and `video/*`, oversize flags, hash/dedup/insert, batch upload and publish, toast summary. |
+| Screen | UploadScreen | `src/screens/UploadScreen.tsx` | Document picker for `image/*` and `video/*`, hash/dedup/insert, batch upload and publish, toast summary. |
 | Screen | FoldersScreen | `src/screens/FoldersScreen.tsx` | System folder picker, enable switch, Scan now, delete, folder actions; manual-path permission fallback on Android. |
 | Screen | SettingsScreen | `src/screens/SettingsScreen.tsx` | Appearance mode, account IDs, log out, read-only config summary, an on-focus diagnostics health snapshot (status/stuck/outbox/hash-cache/processed counts, last pass/flush/response, recent `file_events`), storage permission controls and error log view/clear. |
 | Screen | AboutScreen | `src/screens/AboutScreen.tsx` | App identity, palette and typography summary. |
@@ -280,12 +280,12 @@ The diagram groups implementation files, not runtime processes. `Wiring` is the 
 | Data model | Kafka messages | `src/models/messages.ts` | Upload request/response contracts, request factory, defensive response parser. |
 | Data model | Media patterns | `src/models/mediaPatterns.ts` | Fourteen default include patterns and extension-to-MIME mapping. |
 | Application service | Service wiring | `src/services/singletons.ts` | Constructs repositories, storage, upload manager, Kafka transport/producer/consumer, background service and scheduler. |
-| Application service | FolderScannerService | `src/services/folderScannerService.ts` | Native `Directory.list()` recursive scan, include/exclude globs, MIME lookup, cooperative yields, web rejection; emits `modifiedAtMs` alongside name and size. It never reads file contents. |
+| Application service | FolderScannerService | `src/services/folderScannerService.ts` | Legacy async recursive scan (`readDirectoryAsync` + bounded `getInfoAsync` pool for `file://`, no stat for SAF), include/exclude globs, MIME lookup, cooperative yields, web rejection; emits `modifiedAtMs` alongside the name. It never reads file contents or sizes. |
 | Application service | FolderIngestionService | `src/services/folderIngestionService.ts` | Metadata identity (`computeMetadataHash`), dedup against the preloaded identity set, transactional batch inserts and `lastScannedAt` stamping. |
 | Application service | FileLifecycleService | `src/services/fileLifecycleService.ts` | Guarded status transitions, stale recovery, host retry budget, response apply/dedup; the only status writer. |
 | Application service | OutboxRepository | `src/data/outboxRepository.ts` | Durable publish intent, transactional enqueue/claim/sent/retry/dead state, sent-row pruning. |
 | Application service | OutboxPublisher | `src/services/outboxPublisher.ts` | Enqueue+flush, per-row claim/publish, auth-aware retry, terminal publish failure and DLQ. |
-| Application service | UploadManager | `src/services/uploadManager.ts` | Per-file and byte-aware batch transfer, content-hash path construction, in-progress guard, size checks; lifecycle transitions delegated to `FileLifecycleService`. |
+| Application service | UploadManager | `src/services/uploadManager.ts` | Per-file and count-bounded batch transfer, content-hash path construction, in-progress guard; lifecycle transitions delegated to `FileLifecycleService`. |
 | Application service | Upload actions | `src/services/uploadActions.ts` | Manual folder scan, single and batch upload, durable outbox enqueue, targeted ownership stamping. |
 | Application service | BackgroundUploadService | `src/services/backgroundUploadService.ts` | Non-overlapping pass: stale recovery, auth, outbox flush, folder ingestion, lifecycle candidate selection, batch upload, outbox publish, dead letter. |
 | Application service | BackgroundUploadScheduler | `src/services/backgroundUploadScheduler.ts` | AppState-aware `setInterval` scheduler, single timer, schedule/cancel. |
@@ -321,7 +321,6 @@ erDiagram
         TEXT id PK
         TEXT file_name
         TEXT file_path
-        INTEGER file_size
         TEXT metadata_hash UK
         TEXT mime_type
         TEXT created_at
@@ -360,11 +359,11 @@ Entity notes:
 - `files.status` is constrained by application code, not by a database CHECK constraint. `retry_count` defaults to 0; `is_deduplicated` is an integer boolean.
 - The host treats `fileId` as a client identifier: it hashes the downloaded bytes itself and stores that digest in `jobs.content_hash`, which names the permanent object and thumbnails. Two devices uploading identical bytes therefore deduplicate on the host even though their local identities differ.
 - `files.id` is a UUID generated on the device. The Kafka `fileId` and record key are not the UUID; they are `computeUploadFileId(file.id, file.metadataHash)`, a 64-hex identifier derived from the GUID salted with the metadata hash. It is deliberately not a content hash.
-- `metadata_hash` is `UNIQUE` and the repositories lower-case writes and lookups. Local deduplication is therefore by normalised name + size, and the host's consumer lookup is by the request `correlationId`.
+- `metadata_hash` is `UNIQUE` and the repositories lower-case writes and lookups. Local deduplication is therefore by normalised name, and the host's consumer lookup is by the request `correlationId`.
 - Indexes exist on `files(status)`, `files(metadata_hash)`, `files(discovered_at)` and the composite `files(status, discovered_at)`. There is no index declared for folder paths or device/user columns.
 - The schema is created through one promise in `src/data/database.ts`; a failed open resets the promise so a later call can retry. `PRAGMA journal_mode = WAL` is applied when the schema executes.
 - The database also performs a one-time compatibility migration from the legacy `mega_temp_path` column to `storage_temp_path`. That migration is a local schema upgrade note; MEGA is not the current client storage provider.
-- Schema upgrades run through an ordered `PRAGMA user_version` migration runner (version 1 is the `storage_temp_path` compatibility step). Version 2 adds the lifecycle timestamp/retry columns on `files` (`upload_started_at`, `processing_started_at`, `last_response_at`, `request_correlation_id`, `request_message_id`, `host_retry_count`, `next_attempt_at`, `failure_stage`, `updated_at`) and creates `outbox_messages`, `file_events` and `processed_messages`. Phase 1 writes outbox intents, lifecycle audit events and processed response IDs. Version 3 adds the pagination and scan indexes (`idx_files_discovered_at`, `idx_files_status_discovered`). Version 4 renames `content_hash` to `metadata_hash`, recomputes it from name + size, and drops the retired `file_hash_cache` table. The ER diagram above shows only the original columns.
+- Schema upgrades run through an ordered `PRAGMA user_version` migration runner (version 1 is the `storage_temp_path` compatibility step). Version 2 adds the lifecycle timestamp/retry columns on `files` (`upload_started_at`, `processing_started_at`, `last_response_at`, `request_correlation_id`, `request_message_id`, `host_retry_count`, `next_attempt_at`, `failure_stage`, `updated_at`) and creates `outbox_messages`, `file_events` and `processed_messages`. Phase 1 writes outbox intents, lifecycle audit events and processed response IDs. Version 3 adds the pagination and scan indexes (`idx_files_discovered_at`, `idx_files_status_discovered`). Version 4 renames `content_hash` to `metadata_hash` and drops the retired `file_hash_cache` table. Version 5 re-keys every row on the name-only identity and drops the retired `files.file_size` column. The ER diagram above shows only the original columns.
 - TypeScript models and repositories use camelCase (`fileName`, `metadataHash`, `lastScannedAt`); rows are mapped from snake_case columns at the repository boundary.
 
 Storage locations:
@@ -468,8 +467,8 @@ sequenceDiagram
 4. The row is inserted into `folder_configs`.
 5. For Scan now, `scanFolderAsync(folder)` in `uploadActions` reads the device ID and user ID, then delegates to `FolderIngestionService.ingestFolderAsync`.
 6. The scanner constructs `new Directory(folderPath)` and enumerates with `Directory.list()` recursively. It identifies directories with the `Directory` class (or a `list` method), applies include patterns then excludes against both the entry name and relative path, and yields to the event loop every 50 entries and at least once per directory.
-7. `ScannedFile` entries carry `uri`, `name`, `size`, `createdAt` from `creationTime`, `modifiedAt` from `lastModified`, and the raw `modifiedAtMs`. MIME is resolved later in the ingestion layer. `scanFolderAsyncWithPatterns` exposes the same walk with explicit patterns.
-8. For each entry the ingestion service computes `computeMetadataHash(name, size)` over the normalised name and byte size. No file content is read, so there is no digest and no hash cache.
+7. `ScannedFile` entries carry `uri`, `name`, `createdAt`, `modifiedAt` and the raw `modifiedAtMs`; there is no size field. MIME is resolved later in the ingestion layer. `scanFolderAsyncWithPatterns` exposes the same walk with explicit patterns.
+8. For each entry the ingestion service computes `computeMetadataHash(name)` over the normalised name. No file content or size is read, so there is no digest and no hash cache.
 9. Existing identities are skipped. New ones are collected and flushed through `FileRepository.addManyAsync` in transactional batches of 25; `INSERT OR IGNORE` keeps duplicate identities out.
 10. `folder.lastScannedAt` is stamped once and persisted; cache entries older than 30 days are pruned at the start and end of ingestion.
 
@@ -494,9 +493,9 @@ flowchart TD
     K -->|"yes"| L["Throw: pick files instead"]
     K -->|"no"| M["Directory.list() recursive walk with yields"]
     M --> N["Include patterns, then exclude patterns"]
-    N --> O["Read File metadata: name, size, timestamps"]
-    O --> P["computeMetadataHash(name, size) - no content read"]
-    P --> Q{"Name + size already in files?"}
+    N --> O["Read entry metadata: name and timestamps"]
+    O --> P["computeMetadataHash(name) - no content or size read"]
+    P --> Q{"Name already in files?"}
     Q -->|"yes"| R["Skip duplicate"]
     Q -->|"no"| S["Insert files row with Pending"]
     S --> T["Stamp folder lastScannedAt"]
@@ -508,25 +507,25 @@ flowchart TD
 
 ### 6.3 Manual pick, hash, dedup, batch upload and publish
 
-**Preconditions:** the user is on Upload; an authenticated session is required to upload; S3 is configured; a Kafka transport is configured; the file is not larger than `UploadSettings.MaxFileSizeBytes`.
+**Preconditions:** the user is on Upload; an authenticated session is required to upload; S3 is configured; a Kafka transport is configured.
 
 **Steps:**
 
 1. The user taps Pick Files. `expo-document-picker` opens for `image/*` and `video/*`, allows multiple selection, and copies assets to the cache directory.
-2. Picked assets are appended to the screen list, de-duplicated by URI/name/size within the selection. Files above the 500 MB default are flagged in the list.
+2. Picked assets are appended to the screen list, de-duplicated by URI/name within the selection. No size is requested or checked.
 3. The user taps Upload Files. The screen hashes each picked file and checks `existsByContentHashAsync`.
 4. New files are inserted as `Pending`. Duplicates and hash failures are counted but not inserted.
 5. `uploadBatchAndPublishAsync` verifies the access token, reads device/user IDs, and fills missing IDs with the targeted `FileRepository.setOwnershipAsync` update (no whole-row write).
-6. `UploadManager.uploadBatchAsync` processes the list in byte-aware batches: at most `BatchSize` transfers (10 default) and at most `MaxConcurrentBytes` (256 MB default) declared file bytes per batch, with `Promise.all` per batch. A single file larger than the byte budget runs alone; a byte budget at or below 0 means unlimited.
-7. For each file, `UploadManager` checks local existence, fills a missing size, enforces the maximum size, calls `FileLifecycleService.markUploadingAsync` (guarded), then builds `/temp/uploads/{deviceId}/{fileId}/{fileName}`. A rejected transition returns a failure without throwing.
-8. `S3StorageService` canonicalizes the path, then HEADs the key: because the logical path contains the content hash, an existing object already holds the same bytes and is reused without a PUT. HEAD errors (permissions, network) are ignored and the upload continues. Otherwise it applies the optional prefix, signs the `PUT` (including the file's SHA-256 payload hash when known), and transfers the bytes. Native uses SDK 58 `File.createUploadTask` with progress, cancellation and a size-aware timeout; web reads the file, sends a Blob and aborts on timeout/cancel.
+6. `UploadManager.uploadBatchAsync` processes the list in batches of at most `BatchSize` transfers (10 default), with a bounded worker pool per batch (never one promise per file).
+7. For each file, `UploadManager` checks local existence, calls `FileLifecycleService.markUploadingAsync` (guarded), then builds `/temp/uploads/{deviceId}/{fileId}/{fileName}`. A rejected transition returns a failure without throwing.
+8. `S3StorageService` canonicalizes the path, then HEADs the key: because the logical path contains the content hash, an existing object already holds the same bytes and is reused without a PUT. HEAD errors (permissions, network) are ignored and the upload continues. Otherwise it applies the optional prefix, signs the `PUT` (including the file's SHA-256 payload hash when known), and transfers the bytes. Native uses SDK 58 `File.createUploadTask` with progress, cancellation and a timeout; web reads the file, sends a Blob and aborts on timeout/cancel.
 9. Success calls `FileLifecycleService.markUploadedAsync`, which writes `Uploaded` and the canonical `storageTempPath`. A concurrent state change is reported as a failure, not overwritten.
 10. `uploadActions` calls `OutboxPublisher.enqueueAndFlushAsync`. The outbox row, request identity and `publish_queued` event are committed together; a successful Kafka publish marks the outbox sent and moves the row to `Processing` when that transition is still legal.
 11. A toast reports uploaded, queued, failed and duplicate counts.
 
 **Writes:** guarded `files` transitions at `Pending`, `Uploading`, `Uploaded`, `Processing` or `Failed`; `storage_temp_path`, `error_message`, `last_attempt_at`, `retry_count`, device/user IDs; `outbox_messages` and `file_events`; the S3 temporary object.
 
-**Failure paths:** hash failure -> not inserted; duplicate -> skipped; local file missing -> `Failed` at stage `local`, no retry increment; oversize -> terminal `Failed` at stage `local`; transfer failure -> `Failed` at stage `upload`, retry incremented; missing temporary path after upload -> terminal `Failed` at stage `upload`; publish failure -> the row stays `Uploaded`, the outbox keeps the intent pending with backoff, and terminal publish failure marks the row `Failed` and dead-letters; unauthenticated batch -> all files reported failed. The temporary S3 object is not deleted by the client on a publish failure.
+**Failure paths:** hash failure -> not inserted; duplicate -> skipped; local file missing -> `Failed` at stage `local`, no retry increment; transfer failure -> `Failed` at stage `upload`, retry incremented; missing temporary path after upload -> terminal `Failed` at stage `upload`; publish failure -> the row stays `Uploaded`, the outbox keeps the intent pending with backoff, and terminal publish failure marks the row `Failed` and dead-letters; unauthenticated batch -> all files reported failed. The temporary S3 object is not deleted by the client on a publish failure.
 
 ```mermaid
 sequenceDiagram
@@ -566,7 +565,7 @@ sequenceDiagram
     else authenticated
         Ac->>DB: setOwnershipAsync (targeted)
         Ac->>UM: uploadBatchAsync(files)
-        loop each byte-aware batch
+        loop each batch
             loop each file in the batch
                 UM->>UM: check local file, size and maximum
                 UM->>LC: markUploadingAsync(id, path)
@@ -609,7 +608,7 @@ sequenceDiagram
 8. New metadata identities (normalised name + size) are deduplicated, inserted as `Pending` in transactional batches, and `lastScannedAt` is stamped. No content is read or cached.
 9. Candidate selection is delegated to `FileLifecycleService.getCandidatesAsync(maxFiles, maxRetries, maxHostRetries)`: `Pending`, `Retrying`, `Uploaded`, or `Failed` rows inside both retry budgets, due by `next_attempt_at`, with no active outbox row, and not already publish-terminal (`failure_stage = 'publish'`; only a manual retry re-enqueues those). Each query returns one page of at most `MaxFilesPerRun` rows (50 default; a value at or below 0 reads an internal maximum page), and the pass repeats the query/upload cycle until no eligible row is left, so a backlog is drained in one run rather than one page per trigger. Files are attempted at most once per pass, so a row whose state does not change cannot spin the loop. A candidate whose local file no longer exists is marked `Failed` at stage `local` and skipped.
 10. Missing device/user IDs are filled with the targeted `FileRepository.setOwnershipAsync` update.
-11. The candidate list is uploaded through `UploadManager.uploadBatchAsync`, which applies `BatchSize` and `MaxConcurrentBytes` limits per batch and its own in-progress guard.
+11. The candidate list is uploaded through `UploadManager.uploadBatchAsync`, which applies the `BatchSize` bound per batch and its own in-progress guard.
 12. Upload failures were already marked `Failed` at stage `upload` by `UploadManager`. The pass increments `failed`, reloads the fresh row and may dead-letter it when either retry budget is exhausted.
 13. A successful upload without `storageTempPath` is marked terminal at stage `upload` and counted as failed.
 14. A successful upload increments `uploaded` and calls `OutboxPublisher.enqueueAndFlushAsync`. A queued intent increments `queued`; a failure to queue increments `failed` and best-effort dead-letters the fresh row.
@@ -728,18 +727,18 @@ sequenceDiagram
 
 **Steps:**
 
-1. A transfer failure calls `FileLifecycleService.markUploadFailedAsync`: the row becomes `Failed` at stage `upload`, `retry_count` increments, and `next_attempt_at` gets backoff. Local-missing and oversize failures do not increment retry.
+1. A transfer failure calls `FileLifecycleService.markUploadFailedAsync`: the row becomes `Failed` at stage `upload`, `retry_count` increments, and `next_attempt_at` gets backoff. Local-missing failures do not increment retry.
 2. A publish failure in the manual or background path leaves the file row `Uploaded`. The outbox row stays `pending` with `last_error` and `next_attempt_at`; neither `uploadActions` nor `BackgroundUploadService` rewrites status or retry counters for a publish error.
 3. Auth failures keep the outbox row pending without consuming the publish retry budget, so a token refresh can recover it.
 4. Retryable transport errors keep retrying while the claimed attempt count is below `MaxRetries`. A non-retryable error, or an exhausted attempt count, marks the outbox row `dead`, calls `lifecycle.markTerminalFailureAsync(fileId, 'publish', error)` and produces a dead letter with the original request payload.
 5. For upload/host budget exhaustion, the background pass produces a dead letter when `status === Failed` and either `retry_count >= MaxRetries` or `host_retry_count >= MaxHostRetries`.
-6. The dead-letter payload includes `fileId` (content hash), `fileName`, `filePath`, `fileSize`, `error`, `retryCount`, `hostRetryCount`, `failureStage`, `lastResponseAt`, `lastAttemptAt`, `deviceId`, `userId` and `timestamp`.
+6. The dead-letter payload includes `fileId` (content hash), `fileName`, `filePath`, `error`, `retryCount`, `hostRetryCount`, `failureStage`, `lastResponseAt`, `lastAttemptAt`, `deviceId`, `userId` and `timestamp`.
 7. If the budget is not exhausted, a `Failed` row remains eligible for a later background pass; an outbox row with backoff is retried by the next flush.
 8. The manual and background publish paths now both reach the DLQ through `OutboxPublisher`; the previous "no manual DLQ call site" gap is closed.
 
 **Writes:** guarded `retry_count`, `status`, `failure_stage`, `error_message`, `next_attempt_at`, `last_response_at`; outbox `status`, `attempts`, `next_attempt_at`, `last_error`, `sent_at`; `file_events`; a `stash.dlq` record when produced.
 
-**Failure paths:** local-missing and oversize do not increment retry; local-terminal failures are excluded from automatic retries until a manual retry; dead-letter production is best effort and may itself fail; a `Failed` row at or above either budget is no longer an upload candidate; publish-terminal rows are also excluded until a manual retry; local-terminal and publish-terminal rows are excluded from automatic candidates until a manual retry; stale recovery can consume the transfer or host budget.
+**Failure paths:** local-missing does not increment retry; local-terminal failures are excluded from automatic retries until a manual retry; dead-letter production is best effort and may itself fail; a `Failed` row at or above either budget is no longer an upload candidate; publish-terminal rows are also excluded until a manual retry; local-terminal and publish-terminal rows are excluded from automatic candidates until a manual retry; stale recovery can consume the transfer or host budget.
 
 ```mermaid
 flowchart TD
@@ -796,14 +795,13 @@ Retry table:
 | --- | --- | --- | --- |
 | Upload transfer error or storage exception | `retry_count + 1` | `Failed` | Background pass checks budget and may produce `stash.dlq`. |
 | Local file missing before transfer | No increment | `Failed` | Not a background candidate while the local file is absent; no DLQ from this path. |
-| File exceeds `MaxFileSizeBytes` | No increment | `Failed` | Terminal `Failed` at stage `local`; excluded from automatic candidates until a manual retry. Retry count stays unchanged, so it never reaches the DLQ threshold automatically. |
 | Publish error in manual or background upload | No immediate file counter; outbox `attempts` increments per flush | Stays `Uploaded`, then `Failed` with stage `publish` on terminal publish failure | Outbox retries with backoff; terminal failure marks stage `publish`, produces `stash.dlq` and excludes the row from automatic candidates. |
 | Publish auth error | No file or outbox attempt budget consumed | Unchanged | Outbox stays pending for a token refresh. |
 | Host `FAILED` response | `host_retry_count + 1` | `Failed` | Background pass DLQs when `host_retry_count >= MaxHostRetries`. |
 | Stale `Uploading`/`Processing` recovery | `retry_count + 1` or `host_retry_count + 1` | `Failed` at `upload`/`host_timeout` | Recovery does not itself DLQ; an exhausted recovered row is excluded from candidates until a manual retry (residual gap). |
 | Upload succeeds without a temporary path | No retry increment | `Failed` at stage `upload` | Counted as failed; DLQ only when a budget is already exhausted. |
 
-`MaxRetries` bounds transfer attempts and outbox publish attempts; `MaxHostRetries` bounds host processing attempts. The background pass produces a dead letter when a `Failed` row has exhausted either budget. Local-missing and oversize failures do not increment either counter; local-terminal and publish-terminal failures are excluded from automatic candidates until a manual retry.
+`MaxRetries` bounds transfer attempts and outbox publish attempts; `MaxHostRetries` bounds host processing attempts. The background pass produces a dead letter when a `Failed` row has exhausted either budget. Local-missing failures do not increment either counter; local-terminal and publish-terminal failures are excluded from automatic candidates until a manual retry.
 
 ---
 
@@ -897,7 +895,7 @@ The interface also exposes the read-only `name` property (`S3`).
 - S3 credentials are inlined into the client bundle through `EXPO_PUBLIC_*` values. Use scoped credentials and rotate anything exposed.
 - A presigned URL is a bearer credential for its method, key and lifetime. Do not log it. The S3 service and transfer module redact `X-Amz-Signature` and `X-Amz-Security-Token` from logged errors.
 - Web transfers call S3 from the browser. The bucket needs CORS rules for the Expo origin and the methods in use. The client's current UI path uses `PUT`; provider parity methods use `GET`, `HEAD` and `DELETE`.
-- A single presigned `PUT` is an S3 single-object operation and is subject to S3's 5 GB single-upload limit. Multipart/resumable upload is not implemented (deferred; see the implementation plan register). The app's 500 MB default maximum keeps normal uploads below that limit.
+- A single presigned `PUT` is an S3 single-object operation and is subject to S3's 5 GB single-upload limit. Multipart/resumable upload is not implemented (deferred; see the implementation plan register). The app no longer enforces a client-side size cap.
 - Signed payload hashes provide integrity against a changed local file; they are not a confidentiality control and do not replace TLS.
 - Presigned URLs expire. A long-running retry after expiry requires a new URL; the provider signs at the time of the call.
 - Custom endpoints that use `http://` transmit without TLS. Prefer `https://` outside local development.
@@ -1035,7 +1033,7 @@ The repository host still uses `Storage:Provider=Mega`, `MegaStorageProvider`, a
 | Folder scanning | `Directory.pickDirectoryAsync()` (document picker) then `Directory.list()`; access is session-scoped and must be re-selected after restart | `Directory.pickDirectoryAsync()` (SAF) then `Directory.list()`; system-picked folders use per-folder grants | Not supported; scanner throws and the UI directs the user to Upload → Pick Files |
 | File picker | `expo-document-picker` with `image/*`, `video/*`, multiple, cache copy | Same | Same; assets are blob/data URLs |
 | Hashing | Native `File.digest('SHA-256')`; `content://` failures retry once through a cache copy | Same | Browser-read bytes hashed with `crypto.subtle` (async); `js-sha256` fallback; whole file buffered |
-| S3 upload | Native `File.createUploadTask` (progress, abort, size-aware timeout); `content://` staged to cache and cleaned up | Same | Whole file read into memory, `Blob` + `fetch` PUT with `AbortController` timeout/cancel |
+| S3 upload | Native `File.createUploadTask` (progress, abort, timeout); `content://` staged to cache and cleaned up | Same | Whole file read into memory, `Blob` + `fetch` PUT with `AbortController` timeout/cancel |
 | S3 download (parity) | `downloadAsync` to a destination file | Same | Blob + object URL browser download |
 | Token/device storage | SecureStore | SecureStore | localStorage with memory fallback |
 | Local database | `expo-sqlite` | `expo-sqlite` | `expo-sqlite` web support through the documented Metro WASM/COOP-COEP setup |
@@ -1097,7 +1095,7 @@ Web notes:
 - **Client-id key segments.** The S3 key includes the salted GUID, so two rows cannot collide even with the same file name. Re-uploading the same row reuses the segment, and cross-device identity is settled by the host's content hash, not by the object key.
 - **Global hash uniqueness.** `content_hash` is unique across the local database, and consumer lookup does not filter by `user_id` or `device_id`. Two accounts using the same installation share the dedup namespace.
 - **Auth failures can stay pending indefinitely.** An outbox row with an auth error deliberately does not consume the publish retry budget and is not dead-lettered, because a token refresh can recover it. A permanently invalid identity needs an explicit terminal (non-auth) error to reach the DLQ.
-- **Local-terminal manual retry only.** Local-missing and oversize failures set `failure_stage='local'`, do not increment retry, and are excluded from automatic background candidates. They require a manual retry; a manual retry re-enters the guarded lifecycle.
+- **Local-terminal manual retry only.** Local-missing failures set `failure_stage='local'`, do not increment retry, and are excluded from automatic background candidates. They require a manual retry; a manual retry re-enters the guarded lifecycle.
 - **Dedup is client-side only.** `processed_messages` makes redelivery idempotent, but the proxy still auto-commits offsets before the app acknowledges the SQLite apply. A crash between commit and apply can lose a response. Proxy-side filtering limits responses to the device/user, but ACK/inbox remains blocked.
 - **No OS background execution.** The scheduler is a foreground `setInterval`; iOS/Android suspension stops it.
 
@@ -1159,7 +1157,7 @@ shipping or SLO alert delivery, and the runtime snapshots reset on reload.
 
 - **Host S3/v2 support is absent in this repository.** The host still uses MEGA and a version-1 validator; end-to-end processing is not verified.
 - **Foreground-only scheduling.** The 15-minute pass is a timer that runs only while the app is active; there is no OS-level background task.
-- **Single-object PUT.** Multipart/resumable upload and bucket lifecycle configuration are deferred. S3 limits a single presigned PUT to 5 GB; the app's 500 MB default cap is lower. Enabling multipart requires part-level slicing/presigning, persisted upload state, and a host-compatible key/contract.
+- **Single-object PUT.** Multipart/resumable upload and bucket lifecycle configuration are deferred. S3 limits a single presigned PUT to 5 GB; the app no longer enforces a lower client-side cap. Enabling multipart requires part-level slicing/presigning, persisted upload state, and a host-compatible key/contract.
 - **Presign expiry.** URLs expire (3600 seconds by default, 1...604800 allowed). A delayed retry requires a new presign.
 - **Web constraints.** No folder enumeration (picker-only uploads), upload buffering, localStorage token storage, console-only logs, and S3 CORS requirements.
 - **Unused statuses.** `Scanning`, `Hashing`, `Retrying` and `Deduplicated` exist in the enum/UI but are not assigned by the current core flow.

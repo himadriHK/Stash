@@ -12,7 +12,7 @@ import { UploadStatus } from '../models/uploadStatus';
 import { logError } from '../utils/errorLogger';
 import { mapWithConcurrencyAsync, yieldToEventLoop } from '../utils/cooperative';
 import { computeUploadFileIdForFile } from '../utils/fileIdentity';
-import { localFileExistsAsync, localFileSizeAsync } from '../utils/fileAccess';
+import { localFileExistsAsync } from '../utils/fileAccess';
 import { profileAsync } from '../utils/profiler';
 import type { FileLifecycleService } from './fileLifecycleService';
 import type { StorageProvider } from './storage/storageProvider';
@@ -105,7 +105,7 @@ export class UploadManager {
     return profileAsync(
       'upload.file',
       () => this.uploadFileInnerAsync(file, storageTempPath, options),
-      { attrs: { size: file.fileSize } },
+      { attrs: { fileId: file.id } },
     );
   }
 
@@ -147,23 +147,6 @@ export class UploadManager {
         };
       }
 
-      if (file.fileSize <= 0) {
-        file.fileSize = await localFileSizeAsync(file.filePath, file.fileSize);
-      }
-
-      const maxFileSizeBytes = Math.max(0, appConfig.UploadSettings.MaxFileSizeBytes);
-      if (maxFileSizeBytes > 0 && file.fileSize > maxFileSizeBytes) {
-        const message = `File size ${file.fileSize} exceeds the configured limit of ${maxFileSizeBytes} bytes.`;
-        await this.lifecycle.markTerminalFailureAsync(file.id, 'local', message);
-        await this.refreshFromRepositoryAsync(file);
-        return {
-          fileId: file.id,
-          success: false,
-          storageTempPath: remotePath,
-          errorMessage: message,
-        };
-      }
-
       const started = await this.lifecycle.markUploadingAsync(file.id, remotePath);
       if (!started) {
         await this.refreshFromRepositoryAsync(file);
@@ -192,7 +175,6 @@ export class UploadManager {
               uri: file.filePath,
               name: file.fileName,
               mimeType: file.mimeType,
-              size: file.fileSize,
               fileId: uploadFileId,
               signal: options?.signal,
               onProgress: options?.onProgress,
@@ -278,7 +260,7 @@ export class UploadManager {
   }
 
   /**
-   * Uploads the given files in byte-budgeted batches. Each batch runs through a
+   * Uploads the given files in count-bounded batches. Each batch runs through a
    * bounded worker pool (never one promise per file) and the loop yields between
    * batches, so a pass over 10k files cannot monopolize the JS thread.
    */
@@ -305,7 +287,6 @@ export class UploadManager {
     }
 
     const batchSize = this.batchSize();
-    const maxBatchBytes = appConfig.UploadSettings.MaxConcurrentBytes;
     const results: UploadResult[] = [];
     let batchCount = 0;
     let index = 0;
@@ -313,31 +294,8 @@ export class UploadManager {
     const total = pending.length;
 
     while (index < pending.length) {
-      const batch: FileEntity[] = [];
-      let batchBytes = 0;
-
-      while (index < pending.length && batch.length < batchSize) {
-        const file = pending[index];
-        const declaredBytes = Number.isFinite(file.fileSize)
-          ? Math.max(0, file.fileSize)
-          : 0;
-        const overBudget =
-          maxBatchBytes > 0 && batch.length > 0 && batchBytes + declaredBytes > maxBatchBytes;
-
-        // Stop before exceeding the byte budget; the file starts the next batch.
-        if (overBudget) {
-          break;
-        }
-
-        batch.push(file);
-        batchBytes += declaredBytes;
-        index += 1;
-
-        // A single file larger than the budget is allowed to run alone.
-        if (maxBatchBytes > 0 && declaredBytes > maxBatchBytes) {
-          break;
-        }
-      }
+      const batch = pending.slice(index, index + batchSize);
+      index += batch.length;
 
       batchCount += 1;
       const concurrency = Math.min(

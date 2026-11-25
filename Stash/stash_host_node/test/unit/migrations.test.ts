@@ -18,7 +18,7 @@ describe('migrations', () => {
     const dbPath = path.join(root, 'fresh', 'nested', 'stash.db');
     const db = openDatabase(dbPath);
 
-    expect(LATEST_SCHEMA_VERSION).toBe(2);
+    expect(LATEST_SCHEMA_VERSION).toBe(3);
     expect(db.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('synchronous', { simple: true })).toBe(1);
@@ -48,6 +48,7 @@ describe('migrations', () => {
       db.prepare('PRAGMA table_info(jobs)').all() as { name: string }[]
     ).map((column) => column.name);
     expect(jobColumns).toContain('content_hash');
+    expect(jobColumns).not.toContain('file_size');
 
     closeDatabase(db);
   });

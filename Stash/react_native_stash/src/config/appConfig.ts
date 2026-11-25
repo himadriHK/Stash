@@ -57,9 +57,6 @@ export interface UploadSettings {
   /** Host processing attempts, tracked separately from transfer retries. */
   MaxHostRetries: number;
   MaxRetries: number;
-  MaxFileSizeBytes: number;
-  /** Max declared bytes in one upload batch; 0 or less means unlimited. */
-  MaxConcurrentBytes: number;
 }
 
 export interface BackgroundUploadConfig {
@@ -153,10 +150,6 @@ export const appConfig: StashConfig = {
     MaxHostRetries: resolveNumber(
       process.env.EXPO_PUBLIC_UPLOAD_MAX_HOST_RETRIES,
       rawConfig.UploadSettings.MaxHostRetries,
-    ),
-    MaxConcurrentBytes: resolveNumber(
-      process.env.EXPO_PUBLIC_UPLOAD_MAX_CONCURRENT_BYTES,
-      rawConfig.UploadSettings.MaxConcurrentBytes,
     ),
   },
 };

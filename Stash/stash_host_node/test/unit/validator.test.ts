@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { MAX_FILE_SIZE_BYTES } from '../../src/contracts/request';
 import {
   OTHER_SIGNING_KEY,
   authorizationHeader,
@@ -105,15 +104,6 @@ describe('validateRequest rejections', () => {
     );
     await expectReject(
       JSON.stringify(validRequest({ storageTempPath: '/temp/uploads/x/../../evil.heic' })),
-      'a'.repeat(64),
-      headers,
-      'invalid_payload',
-    );
-  });
-
-  it('rejects oversized files', async () => {
-    await expectReject(
-      JSON.stringify(validRequest({ fileSize: MAX_FILE_SIZE_BYTES + 1 })),
       'a'.repeat(64),
       headers,
       'invalid_payload',
